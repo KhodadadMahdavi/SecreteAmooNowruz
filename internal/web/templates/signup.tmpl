@@ -1,7 +1,7 @@
 {{define "signup_page"}}
 <h1>Create Account</h1>
 {{if .Error}}<p style="color: #b00020;">{{.Error}}</p>{{end}}
-<form method="post" action="/signup">
+<form method="post" action="/signup" enctype="multipart/form-data">
   <div>
     <label for="display_name">Name</label>
     <input id="display_name" name="display_name" type="text" required>
@@ -13,6 +13,10 @@
   <div>
     <label for="password">Password</label>
     <input id="password" name="password" type="password" required>
+  </div>
+  <div>
+    <label for="avatar">Avatar</label>
+    <input id="avatar" name="avatar" type="file" accept="image/png,image/jpeg,image/webp" required>
   </div>
   <button type="submit">Sign Up</button>
 </form>

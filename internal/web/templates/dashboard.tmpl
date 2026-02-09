@@ -1,6 +1,9 @@
 {{define "dashboard_page"}}
 <h1>Dashboard</h1>
 <p>Welcome, {{.DisplayName}} (@{{.Username}}).</p>
+<div>
+  <img src="{{.AvatarURL}}" alt="Avatar for {{.DisplayName}}" style="width: 120px; height: 120px; object-fit: cover; border-radius: 50%;">
+</div>
 <p>You are now logged in to Secrete Amoo Nowruz.</p>
 <form method="post" action="/logout">
   <button type="submit">Logout</button>

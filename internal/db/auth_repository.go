@@ -24,14 +24,14 @@ func NewAuthRepository(db *sql.DB) *AuthRepository {
 	return &AuthRepository{db: db}
 }
 
-func (r *AuthRepository) CreateUser(ctx context.Context, username, passwordHash, displayName string) (model.User, error) {
+func (r *AuthRepository) CreateUser(ctx context.Context, username, passwordHash, displayName string, avatarObjectKey *string) (model.User, error) {
 	query := `
-INSERT INTO users (username, password_hash, display_name)
-VALUES ($1, $2, $3)
+INSERT INTO users (username, password_hash, display_name, avatar_object_key)
+VALUES ($1, $2, $3, $4)
 RETURNING id, username, password_hash, display_name, avatar_object_key, is_admin, created_at;`
 
 	var user model.User
-	err := r.db.QueryRowContext(ctx, query, username, passwordHash, displayName).Scan(
+	err := r.db.QueryRowContext(ctx, query, username, passwordHash, displayName, avatarObjectKey).Scan(
 		&user.ID,
 		&user.Username,
 		&user.PasswordHash,

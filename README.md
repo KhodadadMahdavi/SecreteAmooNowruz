@@ -1,6 +1,6 @@
 # Secrete Amoo Nowruz
 
-## Step 1-4 Status
+## Step 1-5 Status
 
 Project currently includes:
 
@@ -13,6 +13,7 @@ Project currently includes:
 - `.env` parser support and config tests (`internal/config/*_test.go`)
 - Migration framework and initial schema (`internal/db`)
 - Auth core with username/password login + cookie sessions (`internal/auth`, `internal/web`, `internal/db/auth_repository.go`)
+- Avatar upload pipeline and dashboard avatar rendering (`internal/uploads`, `internal/web`)
 
 ## Run
 
@@ -45,3 +46,14 @@ Server validates required config, runs migrations on startup, and logs a safe co
   - opens Postgres (`pgx`)
   - runs DB migrations
   - seeds admin user (if enabled)
+
+## Step 5 Notes
+
+- Signup now requires avatar upload (`multipart/form-data`).
+- Avatar validation rules:
+  - max size: 2MB
+  - allowed MIME: `image/jpeg`, `image/png`, `image/webp`
+- Avatar is uploaded to the configured object store (current implementation: local file-backed store) and saved as `avatar_object_key` on user.
+- New route:
+  - `GET /avatar` (protected, serves logged-in user's avatar)
+- Dashboard now shows the user's avatar image.

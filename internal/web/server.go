@@ -1,11 +1,16 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +19,7 @@ import (
 	"secreteamoonowruz/internal/config"
 	"secreteamoonowruz/internal/db"
 	"secreteamoonowruz/internal/model"
+	"secreteamoonowruz/internal/uploads"
 )
 
 //go:embed templates/*.tmpl
@@ -23,11 +29,17 @@ type contextKey string
 
 const userContextKey contextKey = "auth-user"
 
+const (
+	maxAvatarBytes    int64 = 2 * 1024 * 1024
+	maxMultipartBytes int64 = 4 * 1024 * 1024
+)
+
 type Server struct {
 	mux       *http.ServeMux
 	templates *template.Template
 	cfg       config.Config
 	store     AuthStore
+	uploader  uploads.Store
 }
 
 type indexViewData struct {
@@ -49,10 +61,11 @@ type dashboardPageData struct {
 	AppName     string
 	DisplayName string
 	Username    string
+	AvatarURL   string
 }
 
 type AuthStore interface {
-	CreateUser(ctx context.Context, username, passwordHash, displayName string) (model.User, error)
+	CreateUser(ctx context.Context, username, passwordHash, displayName string, avatarObjectKey *string) (model.User, error)
 	GetUserByUsername(ctx context.Context, username string) (model.User, error)
 	GetUserBySessionTokenHash(ctx context.Context, tokenHash string) (model.User, error)
 	CreateSession(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error
@@ -60,13 +73,17 @@ type AuthStore interface {
 }
 
 type NewServerOptions struct {
-	Config config.Config
-	Store  AuthStore
+	Config   config.Config
+	Store    AuthStore
+	Uploader uploads.Store
 }
 
 func NewServer(opts NewServerOptions) (*Server, error) {
 	if opts.Store == nil {
 		return nil, errors.New("auth store is required")
+	}
+	if opts.Uploader == nil {
+		return nil, errors.New("uploader is required")
 	}
 
 	templates, err := template.ParseFS(templateFS, "templates/*.tmpl")
@@ -79,6 +96,7 @@ func NewServer(opts NewServerOptions) (*Server, error) {
 		templates: templates,
 		cfg:       opts.Config,
 		store:     opts.Store,
+		uploader:  opts.Uploader,
 	}
 	s.registerRoutes()
 
@@ -95,6 +113,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/login", s.withAuth(http.HandlerFunc(s.handleLogin)))
 	s.mux.Handle("/logout", s.withAuth(http.HandlerFunc(s.handleLogout)))
 	s.mux.Handle("/dashboard", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleDashboard))))
+	s.mux.Handle("/avatar", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleAvatar))))
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/readyz", s.handleReadyz)
 }
@@ -131,7 +150,8 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 			AppName: "Secrete Amoo Nowruz",
 		}, "signup_page")
 	case http.MethodPost:
-		if err := r.ParseForm(); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxMultipartBytes)
+		if err := r.ParseMultipartForm(maxMultipartBytes); err != nil {
 			http.Error(w, "invalid form data", http.StatusBadRequest)
 			return
 		}
@@ -155,7 +175,28 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		user, err := s.store.CreateUser(r.Context(), username, passwordHash, displayName)
+		avatarFile, _, err := r.FormFile("avatar")
+		if err != nil {
+			s.renderAuthPage(w, authPageData{
+				Title:   "Sign Up",
+				AppName: "Secrete Amoo Nowruz",
+				Error:   "Avatar image is required.",
+			}, "signup_page")
+			return
+		}
+		defer avatarFile.Close()
+
+		avatarKey, err := s.uploadAvatar(r.Context(), username, avatarFile)
+		if err != nil {
+			s.renderAuthPage(w, authPageData{
+				Title:   "Sign Up",
+				AppName: "Secrete Amoo Nowruz",
+				Error:   err.Error(),
+			}, "signup_page")
+			return
+		}
+
+		user, err := s.store.CreateUser(r.Context(), username, passwordHash, displayName, &avatarKey)
 		if err != nil {
 			if errors.Is(err, db.ErrUsernameConflict) {
 				s.renderAuthPage(w, authPageData{
@@ -278,8 +319,39 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		AppName:     "Secrete Amoo Nowruz",
 		DisplayName: user.DisplayName,
 		Username:    user.Username,
+		AvatarURL:   "/avatar",
 	}); err != nil {
 		http.Error(w, "render dashboard", http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleAvatar(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	user := currentUser(r.Context())
+	if user == nil || user.AvatarObjectKey == nil || *user.AvatarObjectKey == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	reader, contentType, err := s.uploader.Download(r.Context(), *user.AvatarObjectKey)
+	if err != nil {
+		if errors.Is(err, uploads.ErrObjectNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load avatar", http.StatusInternalServerError)
+		return
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	if _, err := io.Copy(w, reader); err != nil {
+		http.Error(w, "stream avatar", http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -395,6 +467,92 @@ func validateSignup(username, displayName, password string) error {
 		return fmt.Errorf("Password must be at least 8 characters.")
 	}
 	return nil
+}
+
+func (s *Server) uploadAvatar(ctx context.Context, username string, file multipart.File) (string, error) {
+	content, contentType, err := readAndValidateAvatar(file)
+	if err != nil {
+		return "", err
+	}
+
+	key, err := newAvatarObjectKey(username, contentType)
+	if err != nil {
+		return "", fmt.Errorf("create avatar key: %w", err)
+	}
+
+	if err := s.uploader.Upload(ctx, key, contentType, bytes.NewReader(content), int64(len(content))); err != nil {
+		return "", fmt.Errorf("upload avatar: %w", err)
+	}
+	return key, nil
+}
+
+func readAndValidateAvatar(file multipart.File) ([]byte, string, error) {
+	content, err := io.ReadAll(io.LimitReader(file, maxAvatarBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("read avatar: %w", err)
+	}
+	if int64(len(content)) > maxAvatarBytes {
+		return nil, "", fmt.Errorf("Avatar must be 2MB or smaller.")
+	}
+	if len(content) == 0 {
+		return nil, "", fmt.Errorf("Avatar file is empty.")
+	}
+
+	contentType := http.DetectContentType(content)
+	switch contentType {
+	case "image/jpeg", "image/png", "image/webp":
+		return content, contentType, nil
+	default:
+		return nil, "", fmt.Errorf("Avatar must be JPG, PNG, or WEBP.")
+	}
+}
+
+func newAvatarObjectKey(username, contentType string) (string, error) {
+	randomBytes := make([]byte, 12)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	randomPart := hex.EncodeToString(randomBytes)
+
+	ext := extensionByContentType(contentType)
+	if ext == "" {
+		return "", fmt.Errorf("unsupported content type %s", contentType)
+	}
+
+	safeUsername := sanitizeObjectPart(username)
+	if safeUsername == "" {
+		safeUsername = "user"
+	}
+
+	return fmt.Sprintf("avatars/%s/%d-%s%s", safeUsername, time.Now().UTC().Unix(), randomPart, ext), nil
+}
+
+func extensionByContentType(contentType string) string {
+	switch contentType {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ""
+	}
+}
+
+func sanitizeObjectPart(input string) string {
+	input = strings.TrimSpace(strings.ToLower(input))
+	var b strings.Builder
+	for _, r := range input {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+			continue
+		}
+		if r == ' ' {
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func (s *Server) renderAuthPage(w http.ResponseWriter, data authPageData, pageTemplate string) {

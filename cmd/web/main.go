@@ -11,6 +11,7 @@ import (
 	"secreteamoonowruz/internal/auth"
 	"secreteamoonowruz/internal/config"
 	"secreteamoonowruz/internal/db"
+	"secreteamoonowruz/internal/uploads"
 	"secreteamoonowruz/internal/web"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -60,9 +61,15 @@ func main() {
 		}
 	}
 
+	uploader, err := uploads.NewLocalStore(cfg.Storage)
+	if err != nil {
+		log.Fatalf("create uploads store: %v", err)
+	}
+
 	server, err := web.NewServer(web.NewServerOptions{
-		Config: cfg,
-		Store:  authRepo,
+		Config:   cfg,
+		Store:    authRepo,
+		Uploader: uploader,
 	})
 	if err != nil {
 		log.Fatalf("create web server: %v", err)
