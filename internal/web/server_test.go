@@ -19,6 +19,7 @@ import (
 	"secreteamoonowruz/internal/config"
 	"secreteamoonowruz/internal/db"
 	"secreteamoonowruz/internal/model"
+	"secreteamoonowruz/internal/uploads"
 )
 
 func TestRoutes(t *testing.T) {
@@ -660,6 +661,119 @@ func TestAdminDrawFailsNotEnoughParticipants(t *testing.T) {
 	}
 }
 
+func TestAlbumUploadAndViewFlow(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[1] = model.Game{
+		ID:             1,
+		Title:          "Secrete Amoo Nowruz 2026",
+		YearGregorian:  2026,
+		YearSolarHijri: 1405,
+		EventDate:      time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     false,
+		Status:         "drawn",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	adminClient := newClientWithJar(t)
+	mustSignupUserAs(t, adminClient, ts.URL, "Ali", "ali123", "password123")
+	store.setUserAdmin("ali123", true)
+
+	resp, err := postAdminPhotoMultipart(adminClient, ts.URL, 1, "Nowruz night", "photo.png", samplePNG())
+	if err != nil {
+		t.Fatalf("postAdminPhotoMultipart() error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("upload status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+	if got := resp.Header.Get("Location"); got != "/admin/games/1?uploaded=1" {
+		t.Fatalf("location = %q, want /admin/games/1?uploaded=1", got)
+	}
+
+	viewerClient := newClientWithJar(t)
+	mustSignupUserAs(t, viewerClient, ts.URL, "Sara", "sara123", "password123")
+
+	resp, err = viewerClient.Get(ts.URL + "/games/1/album")
+	if err != nil {
+		t.Fatalf("GET /games/1/album error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("album status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "Nowruz night") {
+		t.Fatalf("album page missing caption: %q", string(body))
+	}
+	if !strings.Contains(string(body), `/games/1/photos/1`) {
+		t.Fatalf("album page missing image URL: %q", string(body))
+	}
+
+	resp, err = viewerClient.Get(ts.URL + "/games/1/photos/1")
+	if err != nil {
+		t.Fatalf("GET /games/1/photos/1 error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("photo status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "image/png" {
+		t.Fatalf("photo content-type = %q, want image/png", got)
+	}
+}
+
+func TestAlbumUploadForbiddenForNonAdmin(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[1] = model.Game{
+		ID:             1,
+		Title:          "Secrete Amoo Nowruz 2026",
+		YearGregorian:  2026,
+		YearSolarHijri: 1405,
+		EventDate:      time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     true,
+		Status:         "open",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUserAs(t, client, ts.URL, "User", "user123", "password123")
+
+	resp, err := postAdminPhotoMultipart(client, ts.URL, 1, "caption", "photo.png", samplePNG())
+	if err != nil {
+		t.Fatalf("postAdminPhotoMultipart() error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+}
+
 func postSignupMultipart(client *http.Client, baseURL, displayName, username, password, filename string, avatar []byte) (*http.Response, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -715,11 +829,13 @@ func testConfig() config.Config {
 type memoryAuthStore struct {
 	nextUserID  int64
 	nextGameID  int64
+	nextPhotoID int64
 	users       map[string]model.User
 	sessions    map[string]sessionData
 	games       map[int64]model.Game
 	signups     map[int64]map[int64]struct{}
 	assignments map[int64]map[int64]int64
+	albumPhotos map[int64][]model.AlbumPhoto
 }
 
 type sessionData struct {
@@ -732,11 +848,13 @@ func newMemoryAuthStore() *memoryAuthStore {
 	return &memoryAuthStore{
 		nextUserID:  1,
 		nextGameID:  1,
+		nextPhotoID: 1,
 		users:       map[string]model.User{},
 		sessions:    map[string]sessionData{},
 		games:       map[int64]model.Game{},
 		signups:     map[int64]map[int64]struct{}{},
 		assignments: map[int64]map[int64]int64{},
+		albumPhotos: map[int64][]model.AlbumPhoto{},
 	}
 }
 
@@ -930,6 +1048,47 @@ func (s *memoryAuthStore) GetAssignmentForUser(_ context.Context, gameID, giverU
 	return model.User{}, db.ErrNoAssignment
 }
 
+func (s *memoryAuthStore) CreateAlbumPhoto(_ context.Context, input model.CreateAlbumPhotoInput) (model.AlbumPhoto, error) {
+	if _, ok := s.games[input.GameID]; !ok {
+		return model.AlbumPhoto{}, db.ErrNotFound
+	}
+	uploadedBy := input.UploadedBy
+	photo := model.AlbumPhoto{
+		ID:         s.nextPhotoID,
+		GameID:     input.GameID,
+		ObjectKey:  input.ObjectKey,
+		Caption:    input.Caption,
+		UploadedBy: &uploadedBy,
+		CreatedAt:  time.Now().UTC(),
+		SortOrder:  len(s.albumPhotos[input.GameID]),
+	}
+	s.nextPhotoID++
+	s.albumPhotos[input.GameID] = append(s.albumPhotos[input.GameID], photo)
+	return photo, nil
+}
+
+func (s *memoryAuthStore) ListAlbumPhotosByGame(_ context.Context, gameID int64) ([]model.AlbumPhoto, error) {
+	if _, ok := s.games[gameID]; !ok {
+		return nil, db.ErrNotFound
+	}
+	photos := s.albumPhotos[gameID]
+	out := make([]model.AlbumPhoto, len(photos))
+	copy(out, photos)
+	return out, nil
+}
+
+func (s *memoryAuthStore) GetAlbumPhotoByID(_ context.Context, gameID, photoID int64) (model.AlbumPhoto, error) {
+	if _, ok := s.games[gameID]; !ok {
+		return model.AlbumPhoto{}, db.ErrNotFound
+	}
+	for _, photo := range s.albumPhotos[gameID] {
+		if photo.ID == photoID {
+			return photo, nil
+		}
+	}
+	return model.AlbumPhoto{}, db.ErrNotFound
+}
+
 type memoryUploadStore struct {
 	objects map[string]memoryObject
 }
@@ -957,7 +1116,7 @@ func (s *memoryUploadStore) Upload(_ context.Context, key, contentType string, b
 func (s *memoryUploadStore) Download(_ context.Context, key string) (io.ReadCloser, string, error) {
 	object, ok := s.objects[key]
 	if !ok {
-		return nil, "", errors.New("not found")
+		return nil, "", uploads.ErrObjectNotFound
 	}
 	return io.NopCloser(bytes.NewReader(object.data)), object.contentType, nil
 }
@@ -1021,4 +1180,28 @@ func mustGameSignup(t *testing.T, client *http.Client, baseURL string, gameID in
 	if resp.StatusCode != wantStatus {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, wantStatus)
 	}
+}
+
+func postAdminPhotoMultipart(client *http.Client, baseURL string, gameID int64, caption, filename string, photo []byte) (*http.Response, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	_ = writer.WriteField("caption", caption)
+	part, err := writer.CreateFormFile("photo", filename)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := part.Write(photo); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/admin/games/"+strconv.FormatInt(gameID, 10)+"/photos", &body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return client.Do(req)
 }

@@ -417,6 +417,93 @@ WHERE a.game_id = $1 AND a.giver_user_id = $2;
 	return user, nil
 }
 
+func (r *AuthRepository) CreateAlbumPhoto(ctx context.Context, input model.CreateAlbumPhotoInput) (model.AlbumPhoto, error) {
+	var gameExists bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM games WHERE id = $1);`, input.GameID).Scan(&gameExists)
+	if err != nil {
+		return model.AlbumPhoto{}, err
+	}
+	if !gameExists {
+		return model.AlbumPhoto{}, ErrNotFound
+	}
+
+	query := `
+INSERT INTO album_photos (game_id, object_key, caption, uploaded_by, sort_order)
+VALUES (
+	$1, $2, $3, $4,
+	COALESCE((SELECT MAX(sort_order) + 1 FROM album_photos WHERE game_id = $1), 0)
+)
+RETURNING id, game_id, object_key, caption, uploaded_by, created_at, sort_order;
+`
+
+	var photo model.AlbumPhoto
+	err = r.db.QueryRowContext(ctx, query, input.GameID, input.ObjectKey, input.Caption, input.UploadedBy).Scan(
+		&photo.ID,
+		&photo.GameID,
+		&photo.ObjectKey,
+		&photo.Caption,
+		&photo.UploadedBy,
+		&photo.CreatedAt,
+		&photo.SortOrder,
+	)
+	if err != nil {
+		return model.AlbumPhoto{}, err
+	}
+	return photo, nil
+}
+
+func (r *AuthRepository) ListAlbumPhotosByGame(ctx context.Context, gameID int64) ([]model.AlbumPhoto, error) {
+	var gameExists bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM games WHERE id = $1);`, gameID).Scan(&gameExists)
+	if err != nil {
+		return nil, err
+	}
+	if !gameExists {
+		return nil, ErrNotFound
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, game_id, object_key, caption, uploaded_by, created_at, sort_order
+FROM album_photos
+WHERE game_id = $1
+ORDER BY sort_order ASC, id ASC;
+`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	photos := make([]model.AlbumPhoto, 0)
+	for rows.Next() {
+		photo, err := scanAlbumPhoto(rows)
+		if err != nil {
+			return nil, err
+		}
+		photos = append(photos, photo)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return photos, nil
+}
+
+func (r *AuthRepository) GetAlbumPhotoByID(ctx context.Context, gameID, photoID int64) (model.AlbumPhoto, error) {
+	row := r.db.QueryRowContext(ctx, `
+SELECT id, game_id, object_key, caption, uploaded_by, created_at, sort_order
+FROM album_photos
+WHERE game_id = $1 AND id = $2;
+`, gameID, photoID)
+
+	photo, err := scanAlbumPhoto(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.AlbumPhoto{}, ErrNotFound
+		}
+		return model.AlbumPhoto{}, err
+	}
+	return photo, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -466,6 +553,23 @@ ORDER BY user_id ASC;
 		return nil, err
 	}
 	return ids, nil
+}
+
+func scanAlbumPhoto(scanner rowScanner) (model.AlbumPhoto, error) {
+	var photo model.AlbumPhoto
+	err := scanner.Scan(
+		&photo.ID,
+		&photo.GameID,
+		&photo.ObjectKey,
+		&photo.Caption,
+		&photo.UploadedBy,
+		&photo.CreatedAt,
+		&photo.SortOrder,
+	)
+	if err != nil {
+		return model.AlbumPhoto{}, err
+	}
+	return photo, nil
 }
 
 func derangedCopy(participants []int64) ([]int64, error) {

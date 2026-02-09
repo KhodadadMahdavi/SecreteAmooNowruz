@@ -1,0 +1,19 @@
+{{define "album_page"}}
+<h1>{{.GameTitle}} Album</h1>
+<p>Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
+
+{{if .Photos}}
+<div>
+  {{range .Photos}}
+  <figure style="margin: 0 0 1rem 0;">
+    <img src="{{.ImageURL}}" alt="Album photo {{.ID}}" style="max-width: 360px; width: 100%; height: auto;">
+    {{if .Caption}}<figcaption>{{.Caption}}</figcaption>{{end}}
+  </figure>
+  {{end}}
+</div>
+{{else}}
+<p>No photos uploaded yet.</p>
+{{end}}
+
+<p><a href="/games/{{.GameID}}">Back to game</a></p>
+{{end}}

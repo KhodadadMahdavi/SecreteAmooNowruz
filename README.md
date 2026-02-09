@@ -1,6 +1,6 @@
 # Secrete Amoo Nowruz
 
-## Step 1-8 Status
+## Step 1-9 Status
 
 Project currently includes:
 
@@ -17,6 +17,7 @@ Project currently includes:
 - User game view + signup flow (`/games/{id}`, `/games/{id}/signup`)
 - Admin game management flow (`/admin`, `/admin/games/new`, `/admin/games`, `/admin/games/{id}/close-signup`)
 - Draw and assignment reveal flow (`/admin/games/{id}/draw`, `/games/{id}/assignment`)
+- Album upload and viewing flow (`/admin/games/{id}/photos`, `/games/{id}/album`)
 
 ## Run
 
@@ -94,3 +95,15 @@ Server validates required config, runs migrations on startup, and logs a safe co
   - no self assignments (derangement)
   - drawn games cannot be redrawn
 - Game detail now shows assignment link after draw for signed-up users.
+
+## Step 9 Notes
+
+- New album routes:
+  - `POST /admin/games/{id}/photos` (admin upload)
+  - `GET /games/{id}/album` (all logged-in users)
+- Added protected photo streaming route:
+  - `GET /games/{id}/photos/{photoID}`
+- Album uploads are validated:
+  - max size: 8MB
+  - allowed MIME: `image/jpeg`, `image/png`, `image/webp`
+- Admin game page now includes album upload form and album link.

@@ -15,6 +15,13 @@
   {{if eq .DrawError "already-drawn"}}Draw has already been completed.{{end}}
 </p>
 {{end}}
+{{if .PhotoError}}
+<p style="color: #b00020;">
+  {{if eq .PhotoError "invalid-form"}}Invalid upload form.{{end}}
+  {{if eq .PhotoError "missing-photo"}}Please choose a photo file.{{end}}
+  {{if eq .PhotoError "invalid-photo"}}Photo must be JPG, PNG, or WEBP and up to 8MB.{{end}}
+</p>
+{{end}}
 
 {{if .SignupOpen}}
 <form method="post" action="/admin/games/{{.GameID}}/close-signup">
@@ -26,6 +33,21 @@
   <button type="submit">Run Draw</button>
 </form>
 {{end}}
+
+<h3>Upload Album Photo</h3>
+<form method="post" action="/admin/games/{{.GameID}}/photos" enctype="multipart/form-data">
+  <div>
+    <label for="photo">Photo</label>
+    <input id="photo" name="photo" type="file" accept="image/png,image/jpeg,image/webp" required>
+  </div>
+  <div>
+    <label for="caption">Caption</label>
+    <input id="caption" name="caption" type="text">
+  </div>
+  <button type="submit">Upload Photo</button>
+</form>
+
+<p><a href="{{.AlbumURL}}">View album</a></p>
 
 <p><a href="/admin">Back to admin dashboard</a></p>
 {{end}}

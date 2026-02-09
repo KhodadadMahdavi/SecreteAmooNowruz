@@ -26,6 +26,8 @@
       {{template "admin_game_manage_page" .}}
     {{else if eq .Page "assignment_page"}}
       {{template "assignment_page" .}}
+    {{else if eq .Page "album_page"}}
+      {{template "album_page" .}}
     {{end}}
   </main>
 </body>

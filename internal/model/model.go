@@ -43,3 +43,20 @@ type CreateGameInput struct {
 	EventDate      time.Time
 	CreatedBy      int64
 }
+
+type AlbumPhoto struct {
+	ID         int64
+	GameID     int64
+	ObjectKey  string
+	Caption    string
+	UploadedBy *int64
+	CreatedAt  time.Time
+	SortOrder  int
+}
+
+type CreateAlbumPhotoInput struct {
+	GameID     int64
+	ObjectKey  string
+	Caption    string
+	UploadedBy int64
+}

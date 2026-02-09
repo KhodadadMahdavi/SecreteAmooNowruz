@@ -31,8 +31,10 @@ type contextKey string
 const userContextKey contextKey = "auth-user"
 
 const (
-	maxAvatarBytes    int64 = 2 * 1024 * 1024
-	maxMultipartBytes int64 = 4 * 1024 * 1024
+	maxAvatarBytes          int64 = 2 * 1024 * 1024
+	maxAvatarMultipartBytes int64 = 4 * 1024 * 1024
+	maxAlbumPhotoBytes      int64 = 8 * 1024 * 1024
+	maxAlbumMultipartBytes  int64 = 10 * 1024 * 1024
 )
 
 type Server struct {
@@ -135,6 +137,8 @@ type adminGameManagePageData struct {
 	Message        string
 	CanDraw        bool
 	DrawError      string
+	PhotoError     string
+	AlbumURL       string
 }
 
 type assignmentPageData struct {
@@ -146,6 +150,23 @@ type assignmentPageData struct {
 	RecipientName     string
 	RecipientUsername string
 	Message           string
+}
+
+type albumPhotoView struct {
+	ID       int64
+	Caption  string
+	ImageURL string
+}
+
+type albumPageData struct {
+	Title          string
+	Page           string
+	AppName        string
+	GameID         int64
+	GameTitle      string
+	YearGregorian  int
+	YearSolarHijri int
+	Photos         []albumPhotoView
 }
 
 type AuthStore interface {
@@ -162,6 +183,9 @@ type AuthStore interface {
 	CloseGameSignup(ctx context.Context, gameID int64) error
 	DrawAssignments(ctx context.Context, gameID int64) error
 	GetAssignmentForUser(ctx context.Context, gameID, giverUserID int64) (model.User, error)
+	CreateAlbumPhoto(ctx context.Context, input model.CreateAlbumPhotoInput) (model.AlbumPhoto, error)
+	ListAlbumPhotosByGame(ctx context.Context, gameID int64) ([]model.AlbumPhoto, error)
+	GetAlbumPhotoByID(ctx context.Context, gameID, photoID int64) (model.AlbumPhoto, error)
 }
 
 type NewServerOptions struct {
@@ -247,8 +271,8 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 			AppName: "Secrete Amoo Nowruz",
 		}, "signup_page")
 	case http.MethodPost:
-		r.Body = http.MaxBytesReader(w, r.Body, maxMultipartBytes)
-		if err := r.ParseMultipartForm(maxMultipartBytes); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxAvatarMultipartBytes)
+		if err := r.ParseMultipartForm(maxAvatarMultipartBytes); err != nil {
 			http.Error(w, "invalid form data", http.StatusBadRequest)
 			return
 		}
@@ -516,6 +540,27 @@ func (s *Server) handleGameRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 3 && parts[2] == "album" {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		s.handleGameAlbum(w, r, gameID)
+		return
+	}
+
+	if len(parts) == 4 && parts[2] == "photos" {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		photoID, err := parseInt64(parts[3])
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		s.handleGamePhoto(w, r, gameID, photoID)
+		return
+	}
+
 	http.NotFound(w, r)
 }
 
@@ -659,6 +704,82 @@ func (s *Server) handleGameAssignment(w http.ResponseWriter, r *http.Request, ga
 	}
 }
 
+func (s *Server) handleGameAlbum(w http.ResponseWriter, r *http.Request, gameID int64) {
+	game, err := s.store.GetGameByID(r.Context(), gameID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load game", http.StatusInternalServerError)
+		return
+	}
+
+	photos, err := s.store.ListAlbumPhotosByGame(r.Context(), gameID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load album", http.StatusInternalServerError)
+		return
+	}
+
+	views := make([]albumPhotoView, 0, len(photos))
+	for _, photo := range photos {
+		views = append(views, albumPhotoView{
+			ID:       photo.ID,
+			Caption:  photo.Caption,
+			ImageURL: fmt.Sprintf("/games/%d/photos/%d", gameID, photo.ID),
+		})
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "base", albumPageData{
+		Title:          "Album",
+		Page:           "album_page",
+		AppName:        "Secrete Amoo Nowruz",
+		GameID:         gameID,
+		GameTitle:      game.Title,
+		YearGregorian:  game.YearGregorian,
+		YearSolarHijri: game.YearSolarHijri,
+		Photos:         views,
+	}); err != nil {
+		http.Error(w, "render album", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) handleGamePhoto(w http.ResponseWriter, r *http.Request, gameID, photoID int64) {
+	photo, err := s.store.GetAlbumPhotoByID(r.Context(), gameID, photoID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load photo", http.StatusInternalServerError)
+		return
+	}
+
+	reader, contentType, err := s.uploader.Download(r.Context(), photo.ObjectKey)
+	if err != nil {
+		if errors.Is(err, uploads.ErrObjectNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load photo object", http.StatusInternalServerError)
+		return
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	if _, err := io.Copy(w, reader); err != nil {
+		http.Error(w, "stream photo", http.StatusInternalServerError)
+		return
+	}
+}
+
 func (s *Server) handleAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r, http.MethodGet) {
 		return
@@ -790,6 +911,14 @@ func (s *Server) handleAdminGameRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 4 && parts[3] == "photos" {
+		if !allowMethod(w, r, http.MethodPost) {
+			return
+		}
+		s.handleAdminUploadPhoto(w, r, gameID)
+		return
+	}
+
 	http.NotFound(w, r)
 }
 
@@ -812,9 +941,12 @@ func (s *Server) handleAdminManageGame(w http.ResponseWriter, r *http.Request, g
 		message = "Signup closed for this game."
 	case r.URL.Query().Get("drawn") == "1":
 		message = "Draw completed."
+	case r.URL.Query().Get("uploaded") == "1":
+		message = "Photo uploaded."
 	}
 
 	drawError := r.URL.Query().Get("draw_error")
+	photoError := r.URL.Query().Get("photo_error")
 	canDraw := game.Status == "open" && !game.SignupOpen
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -833,6 +965,8 @@ func (s *Server) handleAdminManageGame(w http.ResponseWriter, r *http.Request, g
 		Message:        message,
 		CanDraw:        canDraw,
 		DrawError:      drawError,
+		PhotoError:     photoError,
+		AlbumURL:       fmt.Sprintf("/games/%d/album", game.ID),
 	}); err != nil {
 		http.Error(w, "render admin game page", http.StatusInternalServerError)
 		return
@@ -876,6 +1010,60 @@ func (s *Server) handleAdminDraw(w http.ResponseWriter, r *http.Request, gameID 
 	}
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?drawn=1", gameID), http.StatusSeeOther)
+}
+
+func (s *Server) handleAdminUploadPhoto(w http.ResponseWriter, r *http.Request, gameID int64) {
+	user := currentUser(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if _, err := s.store.GetGameByID(r.Context(), gameID); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load game", http.StatusInternalServerError)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxAlbumMultipartBytes)
+	if err := r.ParseMultipartForm(maxAlbumMultipartBytes); err != nil {
+		http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?photo_error=invalid-form", gameID), http.StatusSeeOther)
+		return
+	}
+
+	file, _, err := r.FormFile("photo")
+	if err != nil {
+		http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?photo_error=missing-photo", gameID), http.StatusSeeOther)
+		return
+	}
+	defer file.Close()
+
+	caption := strings.TrimSpace(r.FormValue("caption"))
+	key, err := s.uploadAlbumPhoto(r.Context(), gameID, file)
+	if err != nil {
+		http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?photo_error=invalid-photo", gameID), http.StatusSeeOther)
+		return
+	}
+
+	_, err = s.store.CreateAlbumPhoto(r.Context(), model.CreateAlbumPhotoInput{
+		GameID:     gameID,
+		ObjectKey:  key,
+		Caption:    caption,
+		UploadedBy: user.ID,
+	})
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "save album photo", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?uploaded=1", gameID), http.StatusSeeOther)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -1008,7 +1196,12 @@ func validateSignup(username, displayName, password string) error {
 }
 
 func (s *Server) uploadAvatar(ctx context.Context, username string, file multipart.File) (string, error) {
-	content, contentType, err := readAndValidateAvatar(file)
+	content, contentType, err := readAndValidateImage(
+		file,
+		maxAvatarBytes,
+		"Avatar must be 2MB or smaller.",
+		"Avatar must be JPG, PNG, or WEBP.",
+	)
 	if err != nil {
 		return "", err
 	}
@@ -1024,16 +1217,38 @@ func (s *Server) uploadAvatar(ctx context.Context, username string, file multipa
 	return key, nil
 }
 
-func readAndValidateAvatar(file multipart.File) ([]byte, string, error) {
-	content, err := io.ReadAll(io.LimitReader(file, maxAvatarBytes+1))
+func (s *Server) uploadAlbumPhoto(ctx context.Context, gameID int64, file multipart.File) (string, error) {
+	content, contentType, err := readAndValidateImage(
+		file,
+		maxAlbumPhotoBytes,
+		"Photo must be 8MB or smaller.",
+		"Photo must be JPG, PNG, or WEBP.",
+	)
 	if err != nil {
-		return nil, "", fmt.Errorf("read avatar: %w", err)
+		return "", err
 	}
-	if int64(len(content)) > maxAvatarBytes {
-		return nil, "", fmt.Errorf("Avatar must be 2MB or smaller.")
+
+	key, err := newAlbumObjectKey(gameID, contentType)
+	if err != nil {
+		return "", fmt.Errorf("create album key: %w", err)
+	}
+
+	if err := s.uploader.Upload(ctx, key, contentType, bytes.NewReader(content), int64(len(content))); err != nil {
+		return "", fmt.Errorf("upload album photo: %w", err)
+	}
+	return key, nil
+}
+
+func readAndValidateImage(file multipart.File, maxBytes int64, tooLargeMsg, badTypeMsg string) ([]byte, string, error) {
+	content, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("read image: %w", err)
+	}
+	if int64(len(content)) > maxBytes {
+		return nil, "", errors.New(tooLargeMsg)
 	}
 	if len(content) == 0 {
-		return nil, "", fmt.Errorf("Avatar file is empty.")
+		return nil, "", fmt.Errorf("Image file is empty.")
 	}
 
 	contentType := http.DetectContentType(content)
@@ -1041,7 +1256,7 @@ func readAndValidateAvatar(file multipart.File) ([]byte, string, error) {
 	case "image/jpeg", "image/png", "image/webp":
 		return content, contentType, nil
 	default:
-		return nil, "", fmt.Errorf("Avatar must be JPG, PNG, or WEBP.")
+		return nil, "", errors.New(badTypeMsg)
 	}
 }
 
@@ -1063,6 +1278,21 @@ func newAvatarObjectKey(username, contentType string) (string, error) {
 	}
 
 	return fmt.Sprintf("avatars/%s/%d-%s%s", safeUsername, time.Now().UTC().Unix(), randomPart, ext), nil
+}
+
+func newAlbumObjectKey(gameID int64, contentType string) (string, error) {
+	randomBytes := make([]byte, 12)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	randomPart := hex.EncodeToString(randomBytes)
+
+	ext := extensionByContentType(contentType)
+	if ext == "" {
+		return "", fmt.Errorf("unsupported content type %s", contentType)
+	}
+
+	return fmt.Sprintf("albums/%d/%d-%s%s", gameID, time.Now().UTC().Unix(), randomPart, ext), nil
 }
 
 func extensionByContentType(contentType string) string {
