@@ -1,0 +1,7 @@
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS album_photos;
+DROP TABLE IF EXISTS assignments;
+DROP TABLE IF EXISTS game_signups;
+DROP TABLE IF EXISTS games;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS users;
