@@ -9,6 +9,9 @@
 
 {{if .SignedUp}}
 <p>You are signed up for this game.</p>
+{{if .CanViewAssignment}}
+<p><a href="{{.AssignmentURL}}">View your assigned person</a></p>
+{{end}}
 {{else if .CanSignup}}
 <form method="post" action="/games/{{.GameID}}/signup">
   <button type="submit">Sign up for game</button>

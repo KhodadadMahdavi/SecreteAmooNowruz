@@ -2,9 +2,11 @@ package db
 
 import (
 	"context"
+	crand "crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -16,6 +18,10 @@ var (
 	ErrUsernameConflict = errors.New("username already exists")
 	ErrAlreadySignedUp  = errors.New("user is already signed up for this game")
 	ErrGameSignupClosed = errors.New("game signup is closed")
+	ErrAlreadyDrawn     = errors.New("draw already completed")
+	ErrNotEnoughPlayers = errors.New("not enough participants for draw")
+	ErrDrawSignupOpen   = errors.New("close signup before draw")
+	ErrNoAssignment     = errors.New("assignment not available")
 )
 
 type AuthRepository struct {
@@ -299,6 +305,118 @@ func (r *AuthRepository) CloseGameSignup(ctx context.Context, gameID int64) erro
 	return err
 }
 
+func (r *AuthRepository) DrawAssignments(ctx context.Context, gameID int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var signupOpen bool
+	var status string
+	err = tx.QueryRowContext(ctx, `
+SELECT signup_open, status
+FROM games
+WHERE id = $1
+FOR UPDATE;
+`, gameID).Scan(&signupOpen, &status)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	if status == "drawn" {
+		return ErrAlreadyDrawn
+	}
+	if status != "open" {
+		return fmt.Errorf("game status %s cannot be drawn", status)
+	}
+	if signupOpen {
+		return ErrDrawSignupOpen
+	}
+
+	var existingAssignments int
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM assignments WHERE game_id = $1;`, gameID).Scan(&existingAssignments)
+	if err != nil {
+		return err
+	}
+	if existingAssignments > 0 {
+		return ErrAlreadyDrawn
+	}
+
+	participants, err := listParticipantIDs(ctx, tx, gameID)
+	if err != nil {
+		return err
+	}
+	if len(participants) < 2 {
+		return ErrNotEnoughPlayers
+	}
+
+	recipients, err := derangedCopy(participants)
+	if err != nil {
+		return err
+	}
+
+	for i := range participants {
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO assignments (game_id, giver_user_id, recipient_user_id)
+VALUES ($1, $2, $3);
+`, gameID, participants[i], recipients[i])
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `
+UPDATE games
+SET status = 'drawn',
+	signup_open = FALSE,
+	drawn_at = NOW()
+WHERE id = $1;
+`, gameID)
+	if err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *AuthRepository) GetAssignmentForUser(ctx context.Context, gameID, giverUserID int64) (model.User, error) {
+	query := `
+SELECT u.id, u.username, u.password_hash, u.display_name, u.avatar_object_key, u.is_admin, u.created_at
+FROM assignments a
+JOIN users u ON u.id = a.recipient_user_id
+WHERE a.game_id = $1 AND a.giver_user_id = $2;
+`
+
+	var user model.User
+	err := r.db.QueryRowContext(ctx, query, gameID, giverUserID).Scan(
+		&user.ID,
+		&user.Username,
+		&user.PasswordHash,
+		&user.DisplayName,
+		&user.AvatarObjectKey,
+		&user.IsAdmin,
+		&user.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.User{}, ErrNoAssignment
+		}
+		return model.User{}, err
+	}
+	return user, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -322,6 +440,76 @@ func scanGame(scanner rowScanner) (model.Game, error) {
 		return model.Game{}, err
 	}
 	return game, nil
+}
+
+func listParticipantIDs(ctx context.Context, tx *sql.Tx, gameID int64) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+SELECT user_id
+FROM game_signups
+WHERE game_id = $1
+ORDER BY user_id ASC;
+`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		ids = append(ids, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func derangedCopy(participants []int64) ([]int64, error) {
+	if len(participants) < 2 {
+		return nil, ErrNotEnoughPlayers
+	}
+
+	recipients := make([]int64, len(participants))
+	copy(recipients, participants)
+
+	const maxAttempts = 1024
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := secureShuffle(recipients); err != nil {
+			return nil, err
+		}
+		if isDerangement(participants, recipients) {
+			return recipients, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to generate derangement after %d attempts", maxAttempts)
+}
+
+func secureShuffle(values []int64) error {
+	for i := len(values) - 1; i > 0; i-- {
+		nBig, err := crand.Int(crand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return err
+		}
+		j := int(nBig.Int64())
+		values[i], values[j] = values[j], values[i]
+	}
+	return nil
+}
+
+func isDerangement(source, shuffled []int64) bool {
+	if len(source) != len(shuffled) {
+		return false
+	}
+	for i := range source {
+		if source[i] == shuffled[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func isUniqueViolation(err error) bool {

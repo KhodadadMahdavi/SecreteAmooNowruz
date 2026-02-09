@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -505,6 +506,160 @@ func TestAdminCreateAndCloseSignupFlow(t *testing.T) {
 	}
 }
 
+func TestAdminDrawAndUserAssignmentFlow(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[1] = model.Game{
+		ID:             1,
+		Title:          "Secrete Amoo Nowruz 2026",
+		YearGregorian:  2026,
+		YearSolarHijri: 1405,
+		EventDate:      time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     true,
+		Status:         "open",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	adminClient := newClientWithJar(t)
+	mustSignupUserAs(t, adminClient, ts.URL, "Ali", "ali123", "password123")
+	store.setUserAdmin("ali123", true)
+
+	userClient := newClientWithJar(t)
+	mustSignupUserAs(t, userClient, ts.URL, "Sara", "sara123", "password123")
+
+	mustGameSignup(t, adminClient, ts.URL, 1, http.StatusSeeOther)
+	mustGameSignup(t, userClient, ts.URL, 1, http.StatusSeeOther)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/close-signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(close-signup) error = %v", err)
+	}
+	resp, err := adminClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /admin/games/1/close-signup error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+
+	req, err = http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/draw", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(draw) error = %v", err)
+	}
+	resp, err = adminClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /admin/games/1/draw error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+
+	game := store.games[1]
+	if game.Status != "drawn" {
+		t.Fatalf("game status = %q, want drawn", game.Status)
+	}
+
+	resp, err = adminClient.Get(ts.URL + "/games/1/assignment")
+	if err != nil {
+		t.Fatalf("GET /games/1/assignment error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("assignment status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "Sara") {
+		t.Fatalf("assignment page does not show recipient: %q", string(body))
+	}
+
+	lateClient := newClientWithJar(t)
+	mustSignupUserAs(t, lateClient, ts.URL, "Nima", "nima123", "password123")
+	req, err = http.NewRequest(http.MethodPost, ts.URL+"/games/1/signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(late signup) error = %v", err)
+	}
+	resp, err = lateClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /games/1/signup late error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("late signup status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+}
+
+func TestAdminDrawFailsNotEnoughParticipants(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[1] = model.Game{
+		ID:             1,
+		Title:          "Secrete Amoo Nowruz 2026",
+		YearGregorian:  2026,
+		YearSolarHijri: 1405,
+		EventDate:      time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     true,
+		Status:         "open",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	adminClient := newClientWithJar(t)
+	mustSignupUserAs(t, adminClient, ts.URL, "Ali", "ali123", "password123")
+	store.setUserAdmin("ali123", true)
+	mustGameSignup(t, adminClient, ts.URL, 1, http.StatusSeeOther)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/close-signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(close-signup) error = %v", err)
+	}
+	resp, err := adminClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /admin/games/1/close-signup error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	req, err = http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/draw", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(draw) error = %v", err)
+	}
+	resp, err = adminClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /admin/games/1/draw error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+	if got := resp.Header.Get("Location"); !strings.Contains(got, "draw_error=not-enough-participants") {
+		t.Fatalf("location = %q, want draw_error=not-enough-participants", got)
+	}
+}
+
 func postSignupMultipart(client *http.Client, baseURL, displayName, username, password, filename string, avatar []byte) (*http.Response, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -558,12 +713,13 @@ func testConfig() config.Config {
 }
 
 type memoryAuthStore struct {
-	nextUserID int64
-	nextGameID int64
-	users      map[string]model.User
-	sessions   map[string]sessionData
-	games      map[int64]model.Game
-	signups    map[int64]map[int64]struct{}
+	nextUserID  int64
+	nextGameID  int64
+	users       map[string]model.User
+	sessions    map[string]sessionData
+	games       map[int64]model.Game
+	signups     map[int64]map[int64]struct{}
+	assignments map[int64]map[int64]int64
 }
 
 type sessionData struct {
@@ -574,12 +730,13 @@ type sessionData struct {
 
 func newMemoryAuthStore() *memoryAuthStore {
 	return &memoryAuthStore{
-		nextUserID: 1,
-		nextGameID: 1,
-		users:      map[string]model.User{},
-		sessions:   map[string]sessionData{},
-		games:      map[int64]model.Game{},
-		signups:    map[int64]map[int64]struct{}{},
+		nextUserID:  1,
+		nextGameID:  1,
+		users:       map[string]model.User{},
+		sessions:    map[string]sessionData{},
+		games:       map[int64]model.Game{},
+		signups:     map[int64]map[int64]struct{}{},
+		assignments: map[int64]map[int64]int64{},
 	}
 }
 
@@ -714,6 +871,65 @@ func (s *memoryAuthStore) CloseGameSignup(_ context.Context, gameID int64) error
 	return nil
 }
 
+func (s *memoryAuthStore) DrawAssignments(_ context.Context, gameID int64) error {
+	game, ok := s.games[gameID]
+	if !ok {
+		return db.ErrNotFound
+	}
+	if game.Status == "drawn" {
+		return db.ErrAlreadyDrawn
+	}
+	if game.SignupOpen {
+		return db.ErrDrawSignupOpen
+	}
+
+	participantsMap := s.signups[gameID]
+	participants := make([]int64, 0, len(participantsMap))
+	for userID := range participantsMap {
+		participants = append(participants, userID)
+	}
+	if len(participants) < 2 {
+		return db.ErrNotEnoughPlayers
+	}
+	sort.Slice(participants, func(i, j int) bool { return participants[i] < participants[j] })
+
+	recipients := make([]int64, len(participants))
+	copy(recipients, participants)
+	for i := range recipients {
+		recipients[i] = participants[(i+1)%len(participants)]
+	}
+
+	s.assignments[gameID] = map[int64]int64{}
+	for i, giver := range participants {
+		s.assignments[gameID][giver] = recipients[i]
+	}
+
+	now := time.Now().UTC()
+	game.Status = "drawn"
+	game.SignupOpen = false
+	game.DrawnAt = &now
+	s.games[gameID] = game
+	return nil
+}
+
+func (s *memoryAuthStore) GetAssignmentForUser(_ context.Context, gameID, giverUserID int64) (model.User, error) {
+	gameAssignments, ok := s.assignments[gameID]
+	if !ok {
+		return model.User{}, db.ErrNoAssignment
+	}
+	recipientID, ok := gameAssignments[giverUserID]
+	if !ok {
+		return model.User{}, db.ErrNoAssignment
+	}
+
+	for _, user := range s.users {
+		if user.ID == recipientID {
+			return user, nil
+		}
+	}
+	return model.User{}, db.ErrNoAssignment
+}
+
 type memoryUploadStore struct {
 	objects map[string]memoryObject
 }
@@ -770,6 +986,18 @@ func (s *memoryAuthStore) setUserAdmin(username string, isAdmin bool) {
 func mustSignupUser(t *testing.T, client *http.Client, baseURL string) {
 	t.Helper()
 	resp, err := postSignupMultipart(client, baseURL, "Ali", "ali123", "password123", "avatar.png", samplePNG())
+	if err != nil {
+		t.Fatalf("postSignupMultipart() error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("signup status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+}
+
+func mustSignupUserAs(t *testing.T, client *http.Client, baseURL, displayName, username, password string) {
+	t.Helper()
+	resp, err := postSignupMultipart(client, baseURL, displayName, username, password, "avatar.png", samplePNG())
 	if err != nil {
 		t.Fatalf("postSignupMultipart() error = %v", err)
 	}

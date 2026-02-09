@@ -78,20 +78,22 @@ type dashboardGameView struct {
 }
 
 type gamePageData struct {
-	Title          string
-	Page           string
-	AppName        string
-	GameID         int64
-	GameTitle      string
-	Description    string
-	YearGregorian  int
-	YearSolarHijri int
-	EventDate      string
-	Status         string
-	SignupOpen     bool
-	SignedUp       bool
-	CanSignup      bool
-	Message        string
+	Title             string
+	Page              string
+	AppName           string
+	GameID            int64
+	GameTitle         string
+	Description       string
+	YearGregorian     int
+	YearSolarHijri    int
+	EventDate         string
+	Status            string
+	SignupOpen        bool
+	SignedUp          bool
+	CanSignup         bool
+	Message           string
+	CanViewAssignment bool
+	AssignmentURL     string
 }
 
 type adminDashboardPageData struct {
@@ -131,6 +133,19 @@ type adminGameManagePageData struct {
 	Status         string
 	SignupOpen     bool
 	Message        string
+	CanDraw        bool
+	DrawError      string
+}
+
+type assignmentPageData struct {
+	Title             string
+	Page              string
+	AppName           string
+	GameID            int64
+	GameTitle         string
+	RecipientName     string
+	RecipientUsername string
+	Message           string
 }
 
 type AuthStore interface {
@@ -145,6 +160,8 @@ type AuthStore interface {
 	SignupUserToGame(ctx context.Context, gameID, userID int64) error
 	CreateGame(ctx context.Context, input model.CreateGameInput) (model.Game, error)
 	CloseGameSignup(ctx context.Context, gameID int64) error
+	DrawAssignments(ctx context.Context, gameID int64) error
+	GetAssignmentForUser(ctx context.Context, gameID, giverUserID int64) (model.User, error)
 }
 
 type NewServerOptions struct {
@@ -491,6 +508,14 @@ func (s *Server) handleGameRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 3 && parts[2] == "assignment" {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		s.handleGameAssignment(w, r, gameID)
+		return
+	}
+
 	http.NotFound(w, r)
 }
 
@@ -523,23 +548,26 @@ func (s *Server) handleGameDetail(w http.ResponseWriter, r *http.Request, gameID
 	}
 
 	canSignup := game.SignupOpen && game.Status == "open" && !signedUp
+	canViewAssignment := game.Status == "drawn" && signedUp
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "base", gamePageData{
-		Title:          game.Title,
-		Page:           "game_page",
-		AppName:        "Secrete Amoo Nowruz",
-		GameID:         game.ID,
-		GameTitle:      game.Title,
-		Description:    game.Description,
-		YearGregorian:  game.YearGregorian,
-		YearSolarHijri: game.YearSolarHijri,
-		EventDate:      game.EventDate.Format("2006-01-02"),
-		Status:         game.Status,
-		SignupOpen:     game.SignupOpen,
-		SignedUp:       signedUp,
-		CanSignup:      canSignup,
-		Message:        message,
+		Title:             game.Title,
+		Page:              "game_page",
+		AppName:           "Secrete Amoo Nowruz",
+		GameID:            game.ID,
+		GameTitle:         game.Title,
+		Description:       game.Description,
+		YearGregorian:     game.YearGregorian,
+		YearSolarHijri:    game.YearSolarHijri,
+		EventDate:         game.EventDate.Format("2006-01-02"),
+		Status:            game.Status,
+		SignupOpen:        game.SignupOpen,
+		SignedUp:          signedUp,
+		CanSignup:         canSignup,
+		Message:           message,
+		CanViewAssignment: canViewAssignment,
+		AssignmentURL:     fmt.Sprintf("/games/%d/assignment", gameID),
 	}); err != nil {
 		http.Error(w, "render game", http.StatusInternalServerError)
 		return
@@ -572,6 +600,63 @@ func (s *Server) handleGameSignup(w http.ResponseWriter, r *http.Request, gameID
 	}
 
 	http.Redirect(w, r, fmt.Sprintf("/games/%d?signed_up=1", gameID), http.StatusSeeOther)
+}
+
+func (s *Server) handleGameAssignment(w http.ResponseWriter, r *http.Request, gameID int64) {
+	user := currentUser(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	game, err := s.store.GetGameByID(r.Context(), gameID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load game", http.StatusInternalServerError)
+		return
+	}
+
+	if game.Status != "drawn" {
+		http.Error(w, "assignment is not available until draw is complete", http.StatusConflict)
+		return
+	}
+
+	signedUp, err := s.store.IsUserSignedUpForGame(r.Context(), gameID, user.ID)
+	if err != nil {
+		http.Error(w, "check signup", http.StatusInternalServerError)
+		return
+	}
+	if !signedUp {
+		http.Error(w, "you are not signed up for this game", http.StatusForbidden)
+		return
+	}
+
+	recipient, err := s.store.GetAssignmentForUser(r.Context(), gameID, user.ID)
+	if err != nil {
+		if errors.Is(err, db.ErrNoAssignment) {
+			http.Error(w, "assignment not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "load assignment", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "base", assignmentPageData{
+		Title:             "Your Assignment",
+		Page:              "assignment_page",
+		AppName:           "Secrete Amoo Nowruz",
+		GameID:            gameID,
+		GameTitle:         game.Title,
+		RecipientName:     recipient.DisplayName,
+		RecipientUsername: recipient.Username,
+	}); err != nil {
+		http.Error(w, "render assignment", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (s *Server) handleAdminDashboard(w http.ResponseWriter, r *http.Request) {
@@ -697,6 +782,14 @@ func (s *Server) handleAdminGameRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 4 && parts[3] == "draw" {
+		if !allowMethod(w, r, http.MethodPost) {
+			return
+		}
+		s.handleAdminDraw(w, r, gameID)
+		return
+	}
+
 	http.NotFound(w, r)
 }
 
@@ -717,7 +810,12 @@ func (s *Server) handleAdminManageGame(w http.ResponseWriter, r *http.Request, g
 		message = "Game created."
 	case r.URL.Query().Get("closed") == "1":
 		message = "Signup closed for this game."
+	case r.URL.Query().Get("drawn") == "1":
+		message = "Draw completed."
 	}
+
+	drawError := r.URL.Query().Get("draw_error")
+	canDraw := game.Status == "open" && !game.SignupOpen
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "base", adminGameManagePageData{
@@ -733,6 +831,8 @@ func (s *Server) handleAdminManageGame(w http.ResponseWriter, r *http.Request, g
 		Status:         game.Status,
 		SignupOpen:     game.SignupOpen,
 		Message:        message,
+		CanDraw:        canDraw,
+		DrawError:      drawError,
 	}); err != nil {
 		http.Error(w, "render admin game page", http.StatusInternalServerError)
 		return
@@ -751,6 +851,31 @@ func (s *Server) handleAdminCloseSignup(w http.ResponseWriter, r *http.Request, 
 	}
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?closed=1", gameID), http.StatusSeeOther)
+}
+
+func (s *Server) handleAdminDraw(w http.ResponseWriter, r *http.Request, gameID int64) {
+	err := s.store.DrawAssignments(r.Context(), gameID)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrNotFound):
+			http.NotFound(w, r)
+			return
+		case errors.Is(err, db.ErrDrawSignupOpen):
+			http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?draw_error=close-signup-first", gameID), http.StatusSeeOther)
+			return
+		case errors.Is(err, db.ErrNotEnoughPlayers):
+			http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?draw_error=not-enough-participants", gameID), http.StatusSeeOther)
+			return
+		case errors.Is(err, db.ErrAlreadyDrawn):
+			http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?draw_error=already-drawn", gameID), http.StatusSeeOther)
+			return
+		default:
+			http.Error(w, "draw failed", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?drawn=1", gameID), http.StatusSeeOther)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,6 @@
 # Secrete Amoo Nowruz
 
-## Step 1-7 Status
+## Step 1-8 Status
 
 Project currently includes:
 
@@ -16,6 +16,7 @@ Project currently includes:
 - Avatar upload pipeline and dashboard avatar rendering (`internal/uploads`, `internal/web`)
 - User game view + signup flow (`/games/{id}`, `/games/{id}/signup`)
 - Admin game management flow (`/admin`, `/admin/games/new`, `/admin/games`, `/admin/games/{id}/close-signup`)
+- Draw and assignment reveal flow (`/admin/games/{id}/draw`, `/games/{id}/assignment`)
 
 ## Run
 
@@ -81,3 +82,15 @@ Server validates required config, runs migrations on startup, and logs a safe co
 - Admin-only middleware now protects admin routes (non-admin gets `403`).
 - Admin can create multiple games per year.
 - Admin can manually close signup per game.
+
+## Step 8 Notes
+
+- New draw/assignment routes:
+  - `POST /admin/games/{id}/draw`
+  - `GET /games/{id}/assignment`
+- Draw is transactional and enforces:
+  - signup must be closed first
+  - at least two participants
+  - no self assignments (derangement)
+  - drawn games cannot be redrawn
+- Game detail now shows assignment link after draw for signed-up users.

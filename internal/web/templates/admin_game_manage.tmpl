@@ -8,10 +8,22 @@
 <p>Status: {{.Status}}</p>
 <p>Signup: {{if .SignupOpen}}open{{else}}closed{{end}}</p>
 {{if .Description}}<p>{{.Description}}</p>{{end}}
+{{if .DrawError}}
+<p style="color: #b00020;">
+  {{if eq .DrawError "close-signup-first"}}Close signup before running draw.{{end}}
+  {{if eq .DrawError "not-enough-participants"}}At least two participants are required.{{end}}
+  {{if eq .DrawError "already-drawn"}}Draw has already been completed.{{end}}
+</p>
+{{end}}
 
 {{if .SignupOpen}}
 <form method="post" action="/admin/games/{{.GameID}}/close-signup">
   <button type="submit">Close Signup</button>
+</form>
+{{end}}
+{{if .CanDraw}}
+<form method="post" action="/admin/games/{{.GameID}}/draw">
+  <button type="submit">Run Draw</button>
 </form>
 {{end}}
 
