@@ -4,11 +4,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{template "title" .}}</title>
+  <title>{{.Title}}</title>
 </head>
 <body>
   <main>
-    {{template "content" .}}
+    {{if eq .Page "index_page"}}
+      {{template "index_page" .}}
+    {{else if eq .Page "signup_page"}}
+      {{template "signup_page" .}}
+    {{else if eq .Page "login_page"}}
+      {{template "login_page" .}}
+    {{else if eq .Page "dashboard_page"}}
+      {{template "dashboard_page" .}}
+    {{end}}
   </main>
 </body>
 </html>

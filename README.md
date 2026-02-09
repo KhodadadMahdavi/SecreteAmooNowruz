@@ -1,6 +1,6 @@
 # Secrete Amoo Nowruz
 
-## Step 1-2 Status
+## Step 1-4 Status
 
 Project currently includes:
 
@@ -12,6 +12,7 @@ Project currently includes:
 - Typed config loader with validation (`internal/config`)
 - `.env` parser support and config tests (`internal/config/*_test.go`)
 - Migration framework and initial schema (`internal/db`)
+- Auth core with username/password login + cookie sessions (`internal/auth`, `internal/web`, `internal/db/auth_repository.go`)
 
 ## Run
 
@@ -20,7 +21,7 @@ Copy-Item .env.example .env
 go run ./cmd/web
 ```
 
-Server validates required config before startup and logs a safe config summary.
+Server validates required config, runs migrations on startup, and logs a safe config summary.
 
 ## Step 3 Notes
 
@@ -30,3 +31,17 @@ Server validates required config before startup and logs a safe config summary.
 - Migrator core:
   - `internal/db/migrate.go` (loads migrations, applies up/down with idempotent behavior)
   - `internal/db/sql_driver.go` (SQL database driver implementation)
+
+## Step 4 Notes
+
+- New auth routes:
+  - `GET/POST /signup`
+  - `GET/POST /login`
+  - `POST /logout`
+  - `GET /dashboard` (protected)
+- Passwords are hashed with Argon2id.
+- Session cookie stores a random token; only SHA-256 token hash is persisted.
+- `cmd/web/main.go` now:
+  - opens Postgres (`pgx`)
+  - runs DB migrations
+  - seeds admin user (if enabled)

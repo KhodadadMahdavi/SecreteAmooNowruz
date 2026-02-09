@@ -1,0 +1,16 @@
+{{define "login_page"}}
+<h1>Login</h1>
+{{if .Error}}<p style="color: #b00020;">{{.Error}}</p>{{end}}
+<form method="post" action="/login">
+  <div>
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" required>
+  </div>
+  <div>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required>
+  </div>
+  <button type="submit">Login</button>
+</form>
+<p><a href="/signup">Need an account? Create one</a></p>
+{{end}}

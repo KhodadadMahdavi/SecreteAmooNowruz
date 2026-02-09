@@ -1,0 +1,8 @@
+{{define "dashboard_page"}}
+<h1>Dashboard</h1>
+<p>Welcome, {{.DisplayName}} (@{{.Username}}).</p>
+<p>You are now logged in to Secrete Amoo Nowruz.</p>
+<form method="post" action="/logout">
+  <button type="submit">Logout</button>
+</form>
+{{end}}
