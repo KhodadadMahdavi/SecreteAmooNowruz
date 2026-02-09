@@ -5,6 +5,21 @@
   <img src="{{.AvatarURL}}" alt="Avatar for {{.DisplayName}}" style="width: 120px; height: 120px; object-fit: cover; border-radius: 50%;">
 </div>
 <p>You are now logged in to Secrete Amoo Nowruz.</p>
+<h2>Games</h2>
+{{if .Games}}
+<ul>
+  {{range .Games}}
+  <li>
+    <a href="/games/{{.ID}}">{{.Title}}</a>
+    ({{.YearGregorian}} / {{.YearSolarHijri}})
+    - status: {{.Status}}
+    {{if .SignedUp}}- signed up{{else if and .SignupOpen (eq .Status "open")}}- open for signup{{else}}- signup closed{{end}}
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<p>No games yet.</p>
+{{end}}
 <form method="post" action="/logout">
   <button type="submit">Logout</button>
 </form>

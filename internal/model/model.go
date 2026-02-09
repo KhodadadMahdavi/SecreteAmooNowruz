@@ -20,3 +20,17 @@ type Session struct {
 	CreatedAt time.Time
 	RevokedAt *time.Time
 }
+
+type Game struct {
+	ID             int64
+	Title          string
+	Description    string
+	YearGregorian  int
+	YearSolarHijri int
+	EventDate      time.Time
+	SignupOpen     bool
+	Status         string
+	DrawnAt        *time.Time
+	CreatedBy      *int64
+	CreatedAt      time.Time
+}

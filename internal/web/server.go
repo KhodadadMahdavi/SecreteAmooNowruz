@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +63,34 @@ type dashboardPageData struct {
 	DisplayName string
 	Username    string
 	AvatarURL   string
+	Games       []dashboardGameView
+}
+
+type dashboardGameView struct {
+	ID             int64
+	Title          string
+	YearGregorian  int
+	YearSolarHijri int
+	Status         string
+	SignupOpen     bool
+	SignedUp       bool
+}
+
+type gamePageData struct {
+	Title          string
+	Page           string
+	AppName        string
+	GameID         int64
+	GameTitle      string
+	Description    string
+	YearGregorian  int
+	YearSolarHijri int
+	EventDate      string
+	Status         string
+	SignupOpen     bool
+	SignedUp       bool
+	CanSignup      bool
+	Message        string
 }
 
 type AuthStore interface {
@@ -70,6 +99,10 @@ type AuthStore interface {
 	GetUserBySessionTokenHash(ctx context.Context, tokenHash string) (model.User, error)
 	CreateSession(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error
 	RevokeSessionByTokenHash(ctx context.Context, tokenHash string) error
+	ListGames(ctx context.Context) ([]model.Game, error)
+	GetGameByID(ctx context.Context, gameID int64) (model.Game, error)
+	IsUserSignedUpForGame(ctx context.Context, gameID, userID int64) (bool, error)
+	SignupUserToGame(ctx context.Context, gameID, userID int64) error
 }
 
 type NewServerOptions struct {
@@ -113,6 +146,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/login", s.withAuth(http.HandlerFunc(s.handleLogin)))
 	s.mux.Handle("/logout", s.withAuth(http.HandlerFunc(s.handleLogout)))
 	s.mux.Handle("/dashboard", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleDashboard))))
+	s.mux.Handle("/games/", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleGameRoutes))))
 	s.mux.Handle("/avatar", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleAvatar))))
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/readyz", s.handleReadyz)
@@ -312,6 +346,30 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	games, err := s.store.ListGames(r.Context())
+	if err != nil {
+		http.Error(w, "list games", http.StatusInternalServerError)
+		return
+	}
+
+	gameViews := make([]dashboardGameView, 0, len(games))
+	for _, game := range games {
+		signedUp, err := s.store.IsUserSignedUpForGame(r.Context(), game.ID, user.ID)
+		if err != nil {
+			http.Error(w, "check signup", http.StatusInternalServerError)
+			return
+		}
+		gameViews = append(gameViews, dashboardGameView{
+			ID:             game.ID,
+			Title:          game.Title,
+			YearGregorian:  game.YearGregorian,
+			YearSolarHijri: game.YearSolarHijri,
+			Status:         game.Status,
+			SignupOpen:     game.SignupOpen,
+			SignedUp:       signedUp,
+		})
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "base", dashboardPageData{
 		Title:       "Dashboard",
@@ -320,6 +378,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		DisplayName: user.DisplayName,
 		Username:    user.Username,
 		AvatarURL:   "/avatar",
+		Games:       gameViews,
 	}); err != nil {
 		http.Error(w, "render dashboard", http.StatusInternalServerError)
 	}
@@ -353,6 +412,119 @@ func (s *Server) handleAvatar(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "stream avatar", http.StatusInternalServerError)
 		return
 	}
+}
+
+func (s *Server) handleGameRoutes(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) < 2 || parts[0] != "games" {
+		http.NotFound(w, r)
+		return
+	}
+
+	gameID, err := parseInt64(parts[1])
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if len(parts) == 2 {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		s.handleGameDetail(w, r, gameID)
+		return
+	}
+
+	if len(parts) == 3 && parts[2] == "signup" {
+		if !allowMethod(w, r, http.MethodPost) {
+			return
+		}
+		s.handleGameSignup(w, r, gameID)
+		return
+	}
+
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleGameDetail(w http.ResponseWriter, r *http.Request, gameID int64) {
+	user := currentUser(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	game, err := s.store.GetGameByID(r.Context(), gameID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load game", http.StatusInternalServerError)
+		return
+	}
+
+	signedUp, err := s.store.IsUserSignedUpForGame(r.Context(), gameID, user.ID)
+	if err != nil {
+		http.Error(w, "check signup", http.StatusInternalServerError)
+		return
+	}
+
+	message := ""
+	if r.URL.Query().Get("signed_up") == "1" {
+		message = "You are signed up for this game."
+	}
+
+	canSignup := game.SignupOpen && game.Status == "open" && !signedUp
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "base", gamePageData{
+		Title:          game.Title,
+		Page:           "game_page",
+		AppName:        "Secrete Amoo Nowruz",
+		GameID:         game.ID,
+		GameTitle:      game.Title,
+		Description:    game.Description,
+		YearGregorian:  game.YearGregorian,
+		YearSolarHijri: game.YearSolarHijri,
+		EventDate:      game.EventDate.Format("2006-01-02"),
+		Status:         game.Status,
+		SignupOpen:     game.SignupOpen,
+		SignedUp:       signedUp,
+		CanSignup:      canSignup,
+		Message:        message,
+	}); err != nil {
+		http.Error(w, "render game", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) handleGameSignup(w http.ResponseWriter, r *http.Request, gameID int64) {
+	user := currentUser(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	err := s.store.SignupUserToGame(r.Context(), gameID, user.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrNotFound):
+			http.NotFound(w, r)
+			return
+		case errors.Is(err, db.ErrAlreadySignedUp):
+			http.Error(w, "already signed up for this game", http.StatusConflict)
+			return
+		case errors.Is(err, db.ErrGameSignupClosed):
+			http.Error(w, "game signup is closed", http.StatusConflict)
+			return
+		default:
+			http.Error(w, "signup failed", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/games/%d?signed_up=1", gameID), http.StatusSeeOther)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -553,6 +725,17 @@ func sanitizeObjectPart(input string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+func parseInt64(raw string) (int64, error) {
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("value must be positive")
+	}
+	return value, nil
 }
 
 func (s *Server) renderAuthPage(w http.ResponseWriter, data authPageData, pageTemplate string) {

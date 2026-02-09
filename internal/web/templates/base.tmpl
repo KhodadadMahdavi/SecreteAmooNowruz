@@ -16,6 +16,8 @@
       {{template "login_page" .}}
     {{else if eq .Page "dashboard_page"}}
       {{template "dashboard_page" .}}
+    {{else if eq .Page "game_page"}}
+      {{template "game_page" .}}
     {{end}}
   </main>
 </body>

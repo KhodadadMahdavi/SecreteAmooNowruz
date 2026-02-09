@@ -1,0 +1,21 @@
+{{define "game_page"}}
+<h1>{{.GameTitle}}</h1>
+<p>Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
+<p>Event date: {{.EventDate}}</p>
+<p>Status: {{.Status}}</p>
+{{if .Description}}<p>{{.Description}}</p>{{end}}
+
+{{if .Message}}<p style="color: #0a7f3f;">{{.Message}}</p>{{end}}
+
+{{if .SignedUp}}
+<p>You are signed up for this game.</p>
+{{else if .CanSignup}}
+<form method="post" action="/games/{{.GameID}}/signup">
+  <button type="submit">Sign up for game</button>
+</form>
+{{else}}
+<p>Signup is closed for this game.</p>
+{{end}}
+
+<p><a href="/dashboard">Back to dashboard</a></p>
+{{end}}

@@ -1,6 +1,6 @@
 # Secrete Amoo Nowruz
 
-## Step 1-5 Status
+## Step 1-6 Status
 
 Project currently includes:
 
@@ -14,6 +14,7 @@ Project currently includes:
 - Migration framework and initial schema (`internal/db`)
 - Auth core with username/password login + cookie sessions (`internal/auth`, `internal/web`, `internal/db/auth_repository.go`)
 - Avatar upload pipeline and dashboard avatar rendering (`internal/uploads`, `internal/web`)
+- User game view + signup flow (`/games/{id}`, `/games/{id}/signup`)
 
 ## Run
 
@@ -57,3 +58,13 @@ Server validates required config, runs migrations on startup, and logs a safe co
 - New route:
   - `GET /avatar` (protected, serves logged-in user's avatar)
 - Dashboard now shows the user's avatar image.
+
+## Step 6 Notes
+
+- New user game routes:
+  - `GET /games/{id}` for game detail
+  - `POST /games/{id}/signup` to join a game
+- Dashboard now lists games with signup state.
+- Signup constraints enforced:
+  - duplicate signup returns conflict
+  - non-open/closed signup returns conflict

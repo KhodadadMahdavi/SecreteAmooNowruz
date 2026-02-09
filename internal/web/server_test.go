@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -247,6 +248,161 @@ func TestSignupRejectsOversizedAvatar(t *testing.T) {
 	}
 }
 
+func TestGameSignupFlow(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[1] = model.Game{
+		ID:             1,
+		Title:          "Secrete Amoo Nowruz 2026",
+		Description:    "Family game",
+		YearGregorian:  2026,
+		YearSolarHijri: 1405,
+		EventDate:      time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     true,
+		Status:         "open",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUser(t, client, ts.URL)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/games/1/signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /games/1/signup error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+	if got := resp.Header.Get("Location"); got != "/games/1?signed_up=1" {
+		t.Fatalf("location = %q, want /games/1?signed_up=1", got)
+	}
+
+	resp, err = client.Get(ts.URL + "/games/1?signed_up=1")
+	if err != nil {
+		t.Fatalf("GET /games/1 error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "You are signed up for this game.") {
+		t.Fatalf("expected signed-up message in body: %q", string(body))
+	}
+}
+
+func TestGameSignupDuplicateBlocked(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[1] = model.Game{
+		ID:             1,
+		Title:          "Secrete Amoo Nowruz 2026",
+		YearGregorian:  2026,
+		YearSolarHijri: 1405,
+		EventDate:      time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     true,
+		Status:         "open",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUser(t, client, ts.URL)
+	mustGameSignup(t, client, ts.URL, 1, http.StatusSeeOther)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/games/1/signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("second POST /games/1/signup error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "already signed up") {
+		t.Fatalf("expected duplicate signup message in body: %q", string(body))
+	}
+}
+
+func TestGameSignupClosedBlocked(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[2] = model.Game{
+		ID:             2,
+		Title:          "Secrete Amoo Nowruz 2025",
+		YearGregorian:  2025,
+		YearSolarHijri: 1404,
+		EventDate:      time.Date(2025, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     false,
+		Status:         "drawn",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUser(t, client, ts.URL)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/games/2/signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /games/2/signup error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "signup is closed") {
+		t.Fatalf("expected closed message in body: %q", string(body))
+	}
+}
+
 func postSignupMultipart(client *http.Client, baseURL, displayName, username, password, filename string, avatar []byte) (*http.Response, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -303,6 +459,8 @@ type memoryAuthStore struct {
 	nextUserID int64
 	users      map[string]model.User
 	sessions   map[string]sessionData
+	games      map[int64]model.Game
+	signups    map[int64]map[int64]struct{}
 }
 
 type sessionData struct {
@@ -316,6 +474,8 @@ func newMemoryAuthStore() *memoryAuthStore {
 		nextUserID: 1,
 		users:      map[string]model.User{},
 		sessions:   map[string]sessionData{},
+		games:      map[int64]model.Game{},
+		signups:    map[int64]map[int64]struct{}{},
 	}
 }
 
@@ -378,6 +538,49 @@ func (s *memoryAuthStore) RevokeSessionByTokenHash(_ context.Context, tokenHash 
 	return nil
 }
 
+func (s *memoryAuthStore) ListGames(_ context.Context) ([]model.Game, error) {
+	out := make([]model.Game, 0, len(s.games))
+	for _, game := range s.games {
+		out = append(out, game)
+	}
+	return out, nil
+}
+
+func (s *memoryAuthStore) GetGameByID(_ context.Context, gameID int64) (model.Game, error) {
+	game, ok := s.games[gameID]
+	if !ok {
+		return model.Game{}, db.ErrNotFound
+	}
+	return game, nil
+}
+
+func (s *memoryAuthStore) IsUserSignedUpForGame(_ context.Context, gameID, userID int64) (bool, error) {
+	users, ok := s.signups[gameID]
+	if !ok {
+		return false, nil
+	}
+	_, exists := users[userID]
+	return exists, nil
+}
+
+func (s *memoryAuthStore) SignupUserToGame(_ context.Context, gameID, userID int64) error {
+	game, ok := s.games[gameID]
+	if !ok {
+		return db.ErrNotFound
+	}
+	if !game.SignupOpen || game.Status != "open" {
+		return db.ErrGameSignupClosed
+	}
+	if _, ok := s.signups[gameID]; !ok {
+		s.signups[gameID] = map[int64]struct{}{}
+	}
+	if _, exists := s.signups[gameID][userID]; exists {
+		return db.ErrAlreadySignedUp
+	}
+	s.signups[gameID][userID] = struct{}{}
+	return nil
+}
+
 type memoryUploadStore struct {
 	objects map[string]memoryObject
 }
@@ -408,4 +611,47 @@ func (s *memoryUploadStore) Download(_ context.Context, key string) (io.ReadClos
 		return nil, "", errors.New("not found")
 	}
 	return io.NopCloser(bytes.NewReader(object.data)), object.contentType, nil
+}
+
+func newClientWithJar(t *testing.T) *http.Client {
+	t.Helper()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar.New() error = %v", err)
+	}
+	return &http.Client{
+		Jar: jar,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func mustSignupUser(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	resp, err := postSignupMultipart(client, baseURL, "Ali", "ali123", "password123", "avatar.png", samplePNG())
+	if err != nil {
+		t.Fatalf("postSignupMultipart() error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("signup status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+}
+
+func mustGameSignup(t *testing.T, client *http.Client, baseURL string, gameID int64, wantStatus int) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/games/"+strconv.FormatInt(gameID, 10)+"/signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /games/%d/signup error = %v", gameID, err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, wantStatus)
+	}
 }
