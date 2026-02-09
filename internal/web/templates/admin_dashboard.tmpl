@@ -1,0 +1,22 @@
+{{define "admin_dashboard_page"}}
+<h1>Admin Dashboard</h1>
+<p><a href="/admin/games/new">Create new game</a></p>
+
+<h2>Games</h2>
+{{if .Games}}
+<ul>
+  {{range .Games}}
+  <li>
+    <a href="/admin/games/{{.ID}}">{{.Title}}</a>
+    ({{.YearGregorian}} / {{.YearSolarHijri}}) - {{.EventDate}}
+    - status: {{.Status}}
+    {{if .SignupOpen}}- signup open{{else}}- signup closed{{end}}
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<p>No games yet.</p>
+{{end}}
+
+<p><a href="/dashboard">Back to dashboard</a></p>
+{{end}}

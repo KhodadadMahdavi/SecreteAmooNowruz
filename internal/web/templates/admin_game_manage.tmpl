@@ -1,0 +1,19 @@
+{{define "admin_game_manage_page"}}
+<h1>Manage Game</h1>
+{{if .Message}}<p style="color: #0a7f3f;">{{.Message}}</p>{{end}}
+
+<h2>{{.GameTitle}}</h2>
+<p>Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
+<p>Event Date: {{.EventDate}}</p>
+<p>Status: {{.Status}}</p>
+<p>Signup: {{if .SignupOpen}}open{{else}}closed{{end}}</p>
+{{if .Description}}<p>{{.Description}}</p>{{end}}
+
+{{if .SignupOpen}}
+<form method="post" action="/admin/games/{{.GameID}}/close-signup">
+  <button type="submit">Close Signup</button>
+</form>
+{{end}}
+
+<p><a href="/admin">Back to admin dashboard</a></p>
+{{end}}

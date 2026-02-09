@@ -62,6 +62,7 @@ type dashboardPageData struct {
 	AppName     string
 	DisplayName string
 	Username    string
+	IsAdmin     bool
 	AvatarURL   string
 	Games       []dashboardGameView
 }
@@ -93,6 +94,45 @@ type gamePageData struct {
 	Message        string
 }
 
+type adminDashboardPageData struct {
+	Title   string
+	Page    string
+	AppName string
+	Games   []adminGameView
+}
+
+type adminGameView struct {
+	ID             int64
+	Title          string
+	YearGregorian  int
+	YearSolarHijri int
+	EventDate      string
+	Status         string
+	SignupOpen     bool
+}
+
+type adminNewGamePageData struct {
+	Title   string
+	Page    string
+	AppName string
+	Error   string
+}
+
+type adminGameManagePageData struct {
+	Title          string
+	Page           string
+	AppName        string
+	GameID         int64
+	GameTitle      string
+	Description    string
+	YearGregorian  int
+	YearSolarHijri int
+	EventDate      string
+	Status         string
+	SignupOpen     bool
+	Message        string
+}
+
 type AuthStore interface {
 	CreateUser(ctx context.Context, username, passwordHash, displayName string, avatarObjectKey *string) (model.User, error)
 	GetUserByUsername(ctx context.Context, username string) (model.User, error)
@@ -103,6 +143,8 @@ type AuthStore interface {
 	GetGameByID(ctx context.Context, gameID int64) (model.Game, error)
 	IsUserSignedUpForGame(ctx context.Context, gameID, userID int64) (bool, error)
 	SignupUserToGame(ctx context.Context, gameID, userID int64) error
+	CreateGame(ctx context.Context, input model.CreateGameInput) (model.Game, error)
+	CloseGameSignup(ctx context.Context, gameID int64) error
 }
 
 type NewServerOptions struct {
@@ -147,6 +189,10 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/logout", s.withAuth(http.HandlerFunc(s.handleLogout)))
 	s.mux.Handle("/dashboard", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleDashboard))))
 	s.mux.Handle("/games/", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleGameRoutes))))
+	s.mux.Handle("/admin", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminDashboard))))
+	s.mux.Handle("/admin/games/new", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminNewGame))))
+	s.mux.Handle("/admin/games", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminCreateGame))))
+	s.mux.Handle("/admin/games/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminGameRoutes))))
 	s.mux.Handle("/avatar", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleAvatar))))
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/readyz", s.handleReadyz)
@@ -377,6 +423,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		AppName:     "Secrete Amoo Nowruz",
 		DisplayName: user.DisplayName,
 		Username:    user.Username,
+		IsAdmin:     user.IsAdmin,
 		AvatarURL:   "/avatar",
 		Games:       gameViews,
 	}); err != nil {
@@ -527,6 +574,185 @@ func (s *Server) handleGameSignup(w http.ResponseWriter, r *http.Request, gameID
 	http.Redirect(w, r, fmt.Sprintf("/games/%d?signed_up=1", gameID), http.StatusSeeOther)
 }
 
+func (s *Server) handleAdminDashboard(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	if r.URL.Path != "/admin" {
+		http.NotFound(w, r)
+		return
+	}
+
+	games, err := s.store.ListGames(r.Context())
+	if err != nil {
+		http.Error(w, "list games", http.StatusInternalServerError)
+		return
+	}
+
+	gameViews := make([]adminGameView, 0, len(games))
+	for _, game := range games {
+		gameViews = append(gameViews, adminGameView{
+			ID:             game.ID,
+			Title:          game.Title,
+			YearGregorian:  game.YearGregorian,
+			YearSolarHijri: game.YearSolarHijri,
+			EventDate:      game.EventDate.Format("2006-01-02"),
+			Status:         game.Status,
+			SignupOpen:     game.SignupOpen,
+		})
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "base", adminDashboardPageData{
+		Title:   "Admin Dashboard",
+		Page:    "admin_dashboard_page",
+		AppName: "Secrete Amoo Nowruz",
+		Games:   gameViews,
+	}); err != nil {
+		http.Error(w, "render admin dashboard", http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleAdminNewGame(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	if r.URL.Path != "/admin/games/new" {
+		http.NotFound(w, r)
+		return
+	}
+
+	s.renderAdminNewGamePage(w, adminNewGamePageData{
+		Title:   "Create Game",
+		AppName: "Secrete Amoo Nowruz",
+	})
+}
+
+func (s *Server) handleAdminCreateGame(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodPost) {
+		return
+	}
+	if r.URL.Path != "/admin/games" {
+		http.NotFound(w, r)
+		return
+	}
+
+	user := currentUser(r.Context())
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	input, err := parseCreateGameInput(r, user.ID)
+	if err != nil {
+		s.renderAdminNewGamePage(w, adminNewGamePageData{
+			Title:   "Create Game",
+			AppName: "Secrete Amoo Nowruz",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	game, err := s.store.CreateGame(r.Context(), input)
+	if err != nil {
+		http.Error(w, "create game", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?created=1", game.ID), http.StatusSeeOther)
+}
+
+func (s *Server) handleAdminGameRoutes(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) < 3 || parts[0] != "admin" || parts[1] != "games" {
+		http.NotFound(w, r)
+		return
+	}
+
+	gameID, err := parseInt64(parts[2])
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if len(parts) == 3 {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		s.handleAdminManageGame(w, r, gameID)
+		return
+	}
+
+	if len(parts) == 4 && parts[3] == "close-signup" {
+		if !allowMethod(w, r, http.MethodPost) {
+			return
+		}
+		s.handleAdminCloseSignup(w, r, gameID)
+		return
+	}
+
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleAdminManageGame(w http.ResponseWriter, r *http.Request, gameID int64) {
+	game, err := s.store.GetGameByID(r.Context(), gameID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "load game", http.StatusInternalServerError)
+		return
+	}
+
+	message := ""
+	switch {
+	case r.URL.Query().Get("created") == "1":
+		message = "Game created."
+	case r.URL.Query().Get("closed") == "1":
+		message = "Signup closed for this game."
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "base", adminGameManagePageData{
+		Title:          "Manage Game",
+		Page:           "admin_game_manage_page",
+		AppName:        "Secrete Amoo Nowruz",
+		GameID:         game.ID,
+		GameTitle:      game.Title,
+		Description:    game.Description,
+		YearGregorian:  game.YearGregorian,
+		YearSolarHijri: game.YearSolarHijri,
+		EventDate:      game.EventDate.Format("2006-01-02"),
+		Status:         game.Status,
+		SignupOpen:     game.SignupOpen,
+		Message:        message,
+	}); err != nil {
+		http.Error(w, "render admin game page", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) handleAdminCloseSignup(w http.ResponseWriter, r *http.Request, gameID int64) {
+	err := s.store.CloseGameSignup(r.Context(), gameID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "close signup", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?closed=1", gameID), http.StatusSeeOther)
+}
+
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r, http.MethodGet) {
 		return
@@ -576,6 +802,21 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if currentUser(r.Context()) == nil {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := currentUser(r.Context())
+		if user == nil {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if !user.IsAdmin {
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -738,8 +979,52 @@ func parseInt64(raw string) (int64, error) {
 	return value, nil
 }
 
+func parseCreateGameInput(r *http.Request, createdBy int64) (model.CreateGameInput, error) {
+	title := strings.TrimSpace(r.FormValue("title"))
+	description := strings.TrimSpace(r.FormValue("description"))
+	yearGregorian, err := strconv.Atoi(strings.TrimSpace(r.FormValue("year_gregorian")))
+	if err != nil {
+		return model.CreateGameInput{}, fmt.Errorf("Gregorian year must be a valid number.")
+	}
+	yearSolarHijri, err := strconv.Atoi(strings.TrimSpace(r.FormValue("year_solar_hijri")))
+	if err != nil {
+		return model.CreateGameInput{}, fmt.Errorf("Solar Hijri year must be a valid number.")
+	}
+	eventDate, err := time.Parse("2006-01-02", strings.TrimSpace(r.FormValue("event_date")))
+	if err != nil {
+		return model.CreateGameInput{}, fmt.Errorf("Event date must use YYYY-MM-DD format.")
+	}
+
+	if title == "" {
+		return model.CreateGameInput{}, fmt.Errorf("Title is required.")
+	}
+	if yearGregorian < 2000 || yearGregorian > 2100 {
+		return model.CreateGameInput{}, fmt.Errorf("Gregorian year must be between 2000 and 2100.")
+	}
+	if yearSolarHijri < 1300 || yearSolarHijri > 1600 {
+		return model.CreateGameInput{}, fmt.Errorf("Solar Hijri year must be between 1300 and 1600.")
+	}
+
+	return model.CreateGameInput{
+		Title:          title,
+		Description:    description,
+		YearGregorian:  yearGregorian,
+		YearSolarHijri: yearSolarHijri,
+		EventDate:      eventDate,
+		CreatedBy:      createdBy,
+	}, nil
+}
+
 func (s *Server) renderAuthPage(w http.ResponseWriter, data authPageData, pageTemplate string) {
 	data.Page = pageTemplate
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "base", data); err != nil {
+		http.Error(w, "render page", http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) renderAdminNewGamePage(w http.ResponseWriter, data adminNewGamePageData) {
+	data.Page = "admin_new_game_page"
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "base", data); err != nil {
 		http.Error(w, "render page", http.StatusInternalServerError)

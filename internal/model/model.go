@@ -34,3 +34,12 @@ type Game struct {
 	CreatedBy      *int64
 	CreatedAt      time.Time
 }
+
+type CreateGameInput struct {
+	Title          string
+	Description    string
+	YearGregorian  int
+	YearSolarHijri int
+	EventDate      time.Time
+	CreatedBy      int64
+}

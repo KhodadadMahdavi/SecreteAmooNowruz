@@ -18,6 +18,12 @@
       {{template "dashboard_page" .}}
     {{else if eq .Page "game_page"}}
       {{template "game_page" .}}
+    {{else if eq .Page "admin_dashboard_page"}}
+      {{template "admin_dashboard_page" .}}
+    {{else if eq .Page "admin_new_game_page"}}
+      {{template "admin_new_game_page" .}}
+    {{else if eq .Page "admin_game_manage_page"}}
+      {{template "admin_game_manage_page" .}}
     {{end}}
   </main>
 </body>

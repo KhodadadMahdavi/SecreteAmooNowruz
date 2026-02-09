@@ -241,6 +241,64 @@ VALUES ($1, $2);
 	return nil
 }
 
+func (r *AuthRepository) CreateGame(ctx context.Context, input model.CreateGameInput) (model.Game, error) {
+	query := `
+INSERT INTO games (
+	title,
+	description,
+	year_gregorian,
+	year_solar_hijri,
+	event_date,
+	signup_open,
+	status,
+	created_by
+) VALUES ($1, $2, $3, $4, $5, TRUE, 'open', $6)
+RETURNING id, title, description, year_gregorian, year_solar_hijri, event_date, signup_open, status, drawn_at, created_by, created_at;
+`
+
+	var game model.Game
+	err := r.db.QueryRowContext(
+		ctx,
+		query,
+		input.Title,
+		input.Description,
+		input.YearGregorian,
+		input.YearSolarHijri,
+		input.EventDate,
+		input.CreatedBy,
+	).Scan(
+		&game.ID,
+		&game.Title,
+		&game.Description,
+		&game.YearGregorian,
+		&game.YearSolarHijri,
+		&game.EventDate,
+		&game.SignupOpen,
+		&game.Status,
+		&game.DrawnAt,
+		&game.CreatedBy,
+		&game.CreatedAt,
+	)
+	if err != nil {
+		return model.Game{}, err
+	}
+	return game, nil
+}
+
+func (r *AuthRepository) CloseGameSignup(ctx context.Context, gameID int64) error {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM games WHERE id = $1);`, gameID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+
+	_, err = r.db.ExecContext(ctx, `UPDATE games SET signup_open = FALSE WHERE id = $1;`, gameID)
+	return err
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

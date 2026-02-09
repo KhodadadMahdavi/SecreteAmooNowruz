@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -403,6 +404,107 @@ func TestGameSignupClosedBlocked(t *testing.T) {
 	}
 }
 
+func TestAdminDashboardForbiddenForNonAdmin(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUser(t, client, ts.URL)
+
+	resp, err := client.Get(ts.URL + "/admin")
+	if err != nil {
+		t.Fatalf("GET /admin error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+}
+
+func TestAdminCreateAndCloseSignupFlow(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUser(t, client, ts.URL)
+	store.setUserAdmin("ali123", true)
+
+	resp, err := client.Get(ts.URL + "/admin/games/new")
+	if err != nil {
+		t.Fatalf("GET /admin/games/new error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	createOne := func(title string) {
+		values := make(url.Values)
+		values.Set("title", title)
+		values.Set("description", "Family event")
+		values.Set("year_gregorian", "2026")
+		values.Set("year_solar_hijri", "1405")
+		values.Set("event_date", "2026-03-21")
+
+		resp, err := client.PostForm(ts.URL+"/admin/games", values)
+		if err != nil {
+			t.Fatalf("POST /admin/games error = %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+		}
+	}
+
+	createOne("Secrete Amoo Nowruz 2026 - A")
+	createOne("Secrete Amoo Nowruz 2026 - B")
+	if len(store.games) != 2 {
+		t.Fatalf("games count = %d, want 2", len(store.games))
+	}
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/close-signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(close-signup) error = %v", err)
+	}
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /admin/games/1/close-signup error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+
+	game := store.games[1]
+	if game.SignupOpen {
+		t.Fatal("game signup_open = true, want false after close")
+	}
+}
+
 func postSignupMultipart(client *http.Client, baseURL, displayName, username, password, filename string, avatar []byte) (*http.Response, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -457,6 +559,7 @@ func testConfig() config.Config {
 
 type memoryAuthStore struct {
 	nextUserID int64
+	nextGameID int64
 	users      map[string]model.User
 	sessions   map[string]sessionData
 	games      map[int64]model.Game
@@ -472,6 +575,7 @@ type sessionData struct {
 func newMemoryAuthStore() *memoryAuthStore {
 	return &memoryAuthStore{
 		nextUserID: 1,
+		nextGameID: 1,
 		users:      map[string]model.User{},
 		sessions:   map[string]sessionData{},
 		games:      map[int64]model.Game{},
@@ -581,6 +685,35 @@ func (s *memoryAuthStore) SignupUserToGame(_ context.Context, gameID, userID int
 	return nil
 }
 
+func (s *memoryAuthStore) CreateGame(_ context.Context, input model.CreateGameInput) (model.Game, error) {
+	createdBy := input.CreatedBy
+	game := model.Game{
+		ID:             s.nextGameID,
+		Title:          input.Title,
+		Description:    input.Description,
+		YearGregorian:  input.YearGregorian,
+		YearSolarHijri: input.YearSolarHijri,
+		EventDate:      input.EventDate,
+		SignupOpen:     true,
+		Status:         "open",
+		CreatedBy:      &createdBy,
+		CreatedAt:      time.Now().UTC(),
+	}
+	s.games[game.ID] = game
+	s.nextGameID++
+	return game, nil
+}
+
+func (s *memoryAuthStore) CloseGameSignup(_ context.Context, gameID int64) error {
+	game, ok := s.games[gameID]
+	if !ok {
+		return db.ErrNotFound
+	}
+	game.SignupOpen = false
+	s.games[gameID] = game
+	return nil
+}
+
 type memoryUploadStore struct {
 	objects map[string]memoryObject
 }
@@ -626,6 +759,12 @@ func newClientWithJar(t *testing.T) *http.Client {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+func (s *memoryAuthStore) setUserAdmin(username string, isAdmin bool) {
+	user := s.users[username]
+	user.IsAdmin = isAdmin
+	s.users[username] = user
 }
 
 func mustSignupUser(t *testing.T, client *http.Client, baseURL string) {
