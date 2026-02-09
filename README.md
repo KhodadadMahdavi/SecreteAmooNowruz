@@ -1,6 +1,6 @@
 # Secrete Amoo Nowruz
 
-## Step 1-9 Status
+## Step 1-10 Status
 
 Project currently includes:
 
@@ -18,6 +18,7 @@ Project currently includes:
 - Admin game management flow (`/admin`, `/admin/games/new`, `/admin/games`, `/admin/games/{id}/close-signup`)
 - Draw and assignment reveal flow (`/admin/games/{id}/draw`, `/games/{id}/assignment`)
 - Album upload and viewing flow (`/admin/games/{id}/photos`, `/games/{id}/album`)
+- Year archive page with dual calendar labels (`/archive`)
 
 ## Run
 
@@ -107,3 +108,13 @@ Server validates required config, runs migrations on startup, and logs a safe co
   - max size: 8MB
   - allowed MIME: `image/jpeg`, `image/png`, `image/webp`
 - Admin game page now includes album upload form and album link.
+
+## Step 10 Notes
+
+- New archive route:
+  - `GET /archive`
+- Archive page groups past games by year and shows both:
+  - Gregorian year
+  - Solar Hijri year
+- Archive includes links to each game and its album.
+- Dashboard now includes a direct link to archive.

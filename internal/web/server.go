@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -66,6 +67,7 @@ type dashboardPageData struct {
 	Username    string
 	IsAdmin     bool
 	AvatarURL   string
+	ArchiveURL  string
 	Games       []dashboardGameView
 }
 
@@ -169,6 +171,28 @@ type albumPageData struct {
 	Photos         []albumPhotoView
 }
 
+type archivePageData struct {
+	Title   string
+	Page    string
+	AppName string
+	Years   []archiveYearView
+}
+
+type archiveYearView struct {
+	YearGregorian  int
+	YearSolarHijri int
+	Games          []archiveGameView
+}
+
+type archiveGameView struct {
+	ID        int64
+	Title     string
+	Status    string
+	EventDate string
+	AlbumURL  string
+	GameURL   string
+}
+
 type AuthStore interface {
 	CreateUser(ctx context.Context, username, passwordHash, displayName string, avatarObjectKey *string) (model.User, error)
 	GetUserByUsername(ctx context.Context, username string) (model.User, error)
@@ -229,6 +253,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/login", s.withAuth(http.HandlerFunc(s.handleLogin)))
 	s.mux.Handle("/logout", s.withAuth(http.HandlerFunc(s.handleLogout)))
 	s.mux.Handle("/dashboard", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleDashboard))))
+	s.mux.Handle("/archive", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleArchive))))
 	s.mux.Handle("/games/", s.withAuth(s.requireAuth(http.HandlerFunc(s.handleGameRoutes))))
 	s.mux.Handle("/admin", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminDashboard))))
 	s.mux.Handle("/admin/games/new", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminNewGame))))
@@ -466,9 +491,81 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Username:    user.Username,
 		IsAdmin:     user.IsAdmin,
 		AvatarURL:   "/avatar",
+		ArchiveURL:  "/archive",
 		Games:       gameViews,
 	}); err != nil {
 		http.Error(w, "render dashboard", http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	if r.URL.Path != "/archive" {
+		http.NotFound(w, r)
+		return
+	}
+
+	games, err := s.store.ListGames(r.Context())
+	if err != nil {
+		http.Error(w, "list games", http.StatusInternalServerError)
+		return
+	}
+
+	grouped := make(map[string]*archiveYearView)
+	for _, game := range games {
+		if game.Status != "drawn" && game.Status != "archived" {
+			continue
+		}
+
+		key := fmt.Sprintf("%d-%d", game.YearGregorian, game.YearSolarHijri)
+		section, ok := grouped[key]
+		if !ok {
+			section = &archiveYearView{
+				YearGregorian:  game.YearGregorian,
+				YearSolarHijri: game.YearSolarHijri,
+				Games:          make([]archiveGameView, 0),
+			}
+			grouped[key] = section
+		}
+
+		section.Games = append(section.Games, archiveGameView{
+			ID:        game.ID,
+			Title:     game.Title,
+			Status:    game.Status,
+			EventDate: game.EventDate.Format("2006-01-02"),
+			AlbumURL:  fmt.Sprintf("/games/%d/album", game.ID),
+			GameURL:   fmt.Sprintf("/games/%d", game.ID),
+		})
+	}
+
+	years := make([]archiveYearView, 0, len(grouped))
+	for _, section := range grouped {
+		sort.Slice(section.Games, func(i, j int) bool {
+			if section.Games[i].EventDate == section.Games[j].EventDate {
+				return section.Games[i].ID > section.Games[j].ID
+			}
+			return section.Games[i].EventDate > section.Games[j].EventDate
+		})
+		years = append(years, *section)
+	}
+
+	sort.Slice(years, func(i, j int) bool {
+		if years[i].YearGregorian == years[j].YearGregorian {
+			return years[i].YearSolarHijri > years[j].YearSolarHijri
+		}
+		return years[i].YearGregorian > years[j].YearGregorian
+	})
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "base", archivePageData{
+		Title:   "Archive",
+		Page:    "archive_page",
+		AppName: "Secrete Amoo Nowruz",
+		Years:   years,
+	}); err != nil {
+		http.Error(w, "render archive", http.StatusInternalServerError)
 	}
 }
 

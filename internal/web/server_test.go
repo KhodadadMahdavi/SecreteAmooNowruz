@@ -104,6 +104,40 @@ func TestDashboardRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestArchiveRequiresAuth(t *testing.T) {
+	t.Helper()
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    newMemoryAuthStore(),
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := &http.Client{
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(ts.URL + "/archive")
+	if err != nil {
+		t.Fatalf("GET /archive error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
+	}
+	if got := resp.Header.Get("Location"); got != "/login" {
+		t.Fatalf("Location = %q, want /login", got)
+	}
+}
+
 func TestSignupLoginLogoutFlowWithAvatar(t *testing.T) {
 	t.Helper()
 
@@ -771,6 +805,83 @@ func TestAlbumUploadForbiddenForNonAdmin(t *testing.T) {
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+}
+
+func TestArchivePageShowsPastGamesAndAlbumLinks(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[1] = model.Game{
+		ID:             1,
+		Title:          "Secrete Amoo Nowruz 2026",
+		YearGregorian:  2026,
+		YearSolarHijri: 1405,
+		EventDate:      time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     false,
+		Status:         "drawn",
+	}
+	store.games[2] = model.Game{
+		ID:             2,
+		Title:          "Secrete Amoo Nowruz 2025",
+		YearGregorian:  2025,
+		YearSolarHijri: 1404,
+		EventDate:      time.Date(2025, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     false,
+		Status:         "archived",
+	}
+	store.games[3] = model.Game{
+		ID:             3,
+		Title:          "Secrete Amoo Nowruz 2027",
+		YearGregorian:  2027,
+		YearSolarHijri: 1406,
+		EventDate:      time.Date(2027, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     true,
+		Status:         "open",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUserAs(t, client, ts.URL, "Ali", "ali123", "password123")
+
+	resp, err := client.Get(ts.URL + "/archive")
+	if err != nil {
+		t.Fatalf("GET /archive error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	body := string(bodyBytes)
+
+	if !strings.Contains(body, "2026 / 1405") {
+		t.Fatalf("archive missing dual year label: %q", body)
+	}
+	if !strings.Contains(body, "Secrete Amoo Nowruz 2026") {
+		t.Fatalf("archive missing archived game title: %q", body)
+	}
+	if !strings.Contains(body, "/games/1/album") {
+		t.Fatalf("archive missing album link: %q", body)
+	}
+	if strings.Contains(body, "Secrete Amoo Nowruz 2027") {
+		t.Fatalf("archive should not show open game: %q", body)
 	}
 }
 
