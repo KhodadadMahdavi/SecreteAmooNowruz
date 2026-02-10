@@ -1,9 +1,33 @@
 {{define "index_page"}}
-<h1>{{.AppName}}</h1>
-<p>Welcome. Start by logging in or creating a new account.</p>
-<nav>
-  <a href="/login">Login</a>
-  <span> | </span>
-  <a href="/signup">Create Account</a>
-</nav>
+<section class="hero">
+  <article class="card">
+    <h1 class="title-lg">{{.AppName}}</h1>
+    <p class="muted">
+      Welcome. Start by logging in or creating a new account.
+    </p>
+    <p>
+      BuzzyBee Studio powers this yearly gift exchange flow:
+      create your profile, join a game, and get your assigned person.
+    </p>
+    <div class="btn-row">
+      <a class="btn" href="/signup">Create Account</a>
+      <a class="btn secondary" href="/login">Login</a>
+    </div>
+  </article>
+
+  <aside class="hero-mark">
+    <span class="brand-mark">
+      <img src="/static/img/buzzybee-logo.png" alt="BuzzyBee logo">
+    </span>
+  </aside>
+</section>
+
+<section class="card">
+  <h2 class="title-md">How It Works</h2>
+  <ul class="list-clean">
+    <li class="list-item">1. Create your account with name and avatar.</li>
+    <li class="list-item">2. Join the active Secrete Amoo Nowruz game.</li>
+    <li class="list-item">3. Wait for draw and see who you buy a gift for.</li>
+  </ul>
+</section>
 {{end}}

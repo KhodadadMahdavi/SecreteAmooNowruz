@@ -1,7 +1,11 @@
 {{define "assignment_page"}}
-<h1>Your Assignment</h1>
-<p>Game: {{.GameTitle}}</p>
-<p>You are buying a gift for:</p>
-<h2>{{.RecipientName}} (@{{.RecipientUsername}})</h2>
-<p><a href="/games/{{.GameID}}">Back to game</a></p>
+<section class="card">
+  <h1 class="title-md">Your Assignment</h1>
+  <p class="meta">Game: {{.GameTitle}}</p>
+  <p>You are buying a gift for:</p>
+  <h2 class="title-lg">{{.RecipientName}} <span class="muted">(@{{.RecipientUsername}})</span></h2>
+  <div class="btn-row">
+    <a class="btn secondary" href="/games/{{.GameID}}">Back to game</a>
+  </div>
+</section>
 {{end}}

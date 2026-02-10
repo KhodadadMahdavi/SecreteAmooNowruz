@@ -1,26 +1,35 @@
 {{define "game_page"}}
-<h1>{{.GameTitle}}</h1>
-<p>Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
-<p>Event date: {{.EventDate}}</p>
-<p>Status: {{.Status}}</p>
-{{if .Description}}<p>{{.Description}}</p>{{end}}
+<section class="card">
+  <h1 class="title-md">{{.GameTitle}}</h1>
+  <p class="meta">Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
+  <p class="meta">Event date: {{.EventDate}}</p>
+  <p class="meta">Status: {{.Status}}</p>
+  {{if .Description}}<p>{{.Description}}</p>{{end}}
 
-{{if .Message}}<p style="color: #0a7f3f;">{{.Message}}</p>{{end}}
-<p><a href="/games/{{.GameID}}/album">View event album</a></p>
+  {{if .Message}}<p class="alert alert-ok">{{.Message}}</p>{{end}}
 
-{{if .SignedUp}}
-<p>You are signed up for this game.</p>
-{{if .CanViewAssignment}}
-<p><a href="{{.AssignmentURL}}">View your assigned person</a></p>
-{{end}}
-{{else if .CanSignup}}
-<form method="post" action="/games/{{.GameID}}/signup">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <button type="submit">Sign up for game</button>
-</form>
-{{else}}
-<p>Signup is closed for this game.</p>
-{{end}}
+  <div class="btn-row">
+    <a class="btn secondary" href="/games/{{.GameID}}/album">View event album</a>
+    <a class="btn secondary" href="/dashboard">Back to dashboard</a>
+  </div>
+</section>
 
-<p><a href="/dashboard">Back to dashboard</a></p>
+<section class="card">
+  <h2 class="title-md">Participation</h2>
+  {{if .SignedUp}}
+  <p>You are signed up for this game.</p>
+  {{if .CanViewAssignment}}
+  <div class="btn-row">
+    <a class="btn" href="{{.AssignmentURL}}">View your assigned person</a>
+  </div>
+  {{end}}
+  {{else if .CanSignup}}
+  <form method="post" action="/games/{{.GameID}}/signup">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button class="btn" type="submit">Sign up for game</button>
+  </form>
+  {{else}}
+  <p class="muted">Signup is closed for this game.</p>
+  {{end}}
+</section>
 {{end}}

@@ -1,25 +1,42 @@
 {{define "signup_page"}}
-<h1>Create Account</h1>
-{{if .Error}}<p style="color: #b00020;">{{.Error}}</p>{{end}}
-<form method="post" action="/signup" enctype="multipart/form-data">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <div>
-    <label for="display_name">Name</label>
-    <input id="display_name" name="display_name" type="text" required>
-  </div>
-  <div>
-    <label for="username">Username</label>
-    <input id="username" name="username" type="text" required>
-  </div>
-  <div>
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" required>
-  </div>
-  <div>
-    <label for="avatar">Avatar</label>
-    <input id="avatar" name="avatar" type="file" accept="image/png,image/jpeg,image/webp" required>
-  </div>
-  <button type="submit">Sign Up</button>
-</form>
-<p><a href="/login">Already have an account? Login</a></p>
+<section class="grid-two">
+  <article class="card">
+    <h1 class="title-md">Create Account</h1>
+    <p class="muted">Add your profile and join Secrete Amoo Nowruz.</p>
+    {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
+
+    <form class="form-stack" method="post" action="/signup" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="field">
+        <label for="display_name">Name</label>
+        <input id="display_name" name="display_name" type="text" required>
+      </div>
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+      </div>
+      <div class="field">
+        <label for="avatar">Avatar</label>
+        <input id="avatar" name="avatar" type="file" accept="image/png,image/jpeg,image/webp" required>
+      </div>
+      <div class="btn-row">
+        <button class="btn" type="submit">Sign Up</button>
+        <a class="btn secondary" href="/login">Login Instead</a>
+      </div>
+    </form>
+  </article>
+
+  <aside class="card">
+    <h2 class="title-md">Profile Notes</h2>
+    <ul class="list-clean">
+      <li class="list-item">Avatar format: JPG, PNG, WEBP</li>
+      <li class="list-item">Avatar size: up to 2MB</li>
+      <li class="list-item">Username: lowercase letters, numbers, dash, underscore</li>
+    </ul>
+  </aside>
+</section>
 {{end}}

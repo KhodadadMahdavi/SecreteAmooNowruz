@@ -1,19 +1,24 @@
 {{define "album_page"}}
-<h1>{{.GameTitle}} Album</h1>
-<p>Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
+<section class="card">
+  <h1 class="title-md">{{.GameTitle}} Album</h1>
+  <p class="meta">Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
+  <div class="btn-row">
+    <a class="btn secondary" href="/games/{{.GameID}}">Back to game</a>
+  </div>
+</section>
 
-{{if .Photos}}
-<div>
-  {{range .Photos}}
-  <figure style="margin: 0 0 1rem 0;">
-    <img src="{{.ImageURL}}" alt="Album photo {{.ID}}" style="max-width: 360px; width: 100%; height: auto;">
-    {{if .Caption}}<figcaption>{{.Caption}}</figcaption>{{end}}
-  </figure>
+<section class="card">
+  {{if .Photos}}
+  <div class="photo-grid">
+    {{range .Photos}}
+    <figure>
+      <img src="{{.ImageURL}}" alt="Album photo {{.ID}}">
+      {{if .Caption}}<figcaption class="meta">{{.Caption}}</figcaption>{{end}}
+    </figure>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="muted">No photos uploaded yet.</p>
   {{end}}
-</div>
-{{else}}
-<p>No photos uploaded yet.</p>
-{{end}}
-
-<p><a href="/games/{{.GameID}}">Back to game</a></p>
+</section>
 {{end}}

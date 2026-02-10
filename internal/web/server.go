@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"sort"
@@ -28,6 +29,9 @@ import (
 
 //go:embed templates/*.tmpl
 var templateFS embed.FS
+
+//go:embed static/*
+var staticFilesFS embed.FS
 
 type contextKey string
 
@@ -243,6 +247,10 @@ func NewServer(opts NewServerOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	staticFS, err := fs.Sub(staticFilesFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("load static assets: %w", err)
+	}
 
 	s := &Server{
 		mux:       http.NewServeMux(),
@@ -251,6 +259,7 @@ func NewServer(opts NewServerOptions) (*Server, error) {
 		store:     opts.Store,
 		uploader:  opts.Uploader,
 	}
+	s.mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	s.registerRoutes()
 
 	return s, nil

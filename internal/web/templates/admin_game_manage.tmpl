@@ -1,57 +1,64 @@
 {{define "admin_game_manage_page"}}
-<h1>Manage Game</h1>
-{{if .Message}}<p style="color: #0a7f3f;">{{.Message}}</p>{{end}}
+<section class="card">
+  <h1 class="title-md">Manage Game</h1>
+  {{if .Message}}<p class="alert alert-ok">{{.Message}}</p>{{end}}
 
-<h2>{{.GameTitle}}</h2>
-<p>Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
-<p>Event Date: {{.EventDate}}</p>
-<p>Status: {{.Status}}</p>
-<p>Signup: {{if .SignupOpen}}open{{else}}closed{{end}}</p>
-{{if .Description}}<p>{{.Description}}</p>{{end}}
-{{if .DrawError}}
-<p style="color: #b00020;">
-  {{if eq .DrawError "close-signup-first"}}Close signup before running draw.{{end}}
-  {{if eq .DrawError "not-enough-participants"}}At least two participants are required.{{end}}
-  {{if eq .DrawError "already-drawn"}}Draw has already been completed.{{end}}
-</p>
-{{end}}
-{{if .PhotoError}}
-<p style="color: #b00020;">
-  {{if eq .PhotoError "invalid-form"}}Invalid upload form.{{end}}
-  {{if eq .PhotoError "missing-photo"}}Please choose a photo file.{{end}}
-  {{if eq .PhotoError "invalid-photo"}}Photo must be JPG, PNG, or WEBP and up to 8MB.{{end}}
-  {{if eq .PhotoError "caption-too-long"}}Caption must be at most 200 characters.{{end}}
-</p>
-{{end}}
+  <h2 class="title-md">{{.GameTitle}}</h2>
+  <p class="meta">Year: {{.YearGregorian}} / {{.YearSolarHijri}}</p>
+  <p class="meta">Event Date: {{.EventDate}}</p>
+  <p class="meta">Status: {{.Status}}</p>
+  <p class="meta">Signup: {{if .SignupOpen}}open{{else}}closed{{end}}</p>
+  {{if .Description}}<p>{{.Description}}</p>{{end}}
 
-{{if .SignupOpen}}
-<form method="post" action="/admin/games/{{.GameID}}/close-signup">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <button type="submit">Close Signup</button>
-</form>
-{{end}}
-{{if .CanDraw}}
-<form method="post" action="/admin/games/{{.GameID}}/draw">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <button type="submit">Run Draw</button>
-</form>
-{{end}}
+  {{if .DrawError}}
+  <p class="alert alert-error">
+    {{if eq .DrawError "close-signup-first"}}Close signup before running draw.{{end}}
+    {{if eq .DrawError "not-enough-participants"}}At least two participants are required.{{end}}
+    {{if eq .DrawError "already-drawn"}}Draw has already been completed.{{end}}
+  </p>
+  {{end}}
+  {{if .PhotoError}}
+  <p class="alert alert-error">
+    {{if eq .PhotoError "invalid-form"}}Invalid upload form.{{end}}
+    {{if eq .PhotoError "missing-photo"}}Please choose a photo file.{{end}}
+    {{if eq .PhotoError "invalid-photo"}}Photo must be JPG, PNG, or WEBP and up to 8MB.{{end}}
+    {{if eq .PhotoError "caption-too-long"}}Caption must be at most 200 characters.{{end}}
+  </p>
+  {{end}}
 
-<h3>Upload Album Photo</h3>
-<form method="post" action="/admin/games/{{.GameID}}/photos" enctype="multipart/form-data">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <div>
-    <label for="photo">Photo</label>
-    <input id="photo" name="photo" type="file" accept="image/png,image/jpeg,image/webp" required>
+  <div class="btn-row">
+    {{if .SignupOpen}}
+    <form method="post" action="/admin/games/{{.GameID}}/close-signup">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button class="btn secondary" type="submit">Close Signup</button>
+    </form>
+    {{end}}
+    {{if .CanDraw}}
+    <form method="post" action="/admin/games/{{.GameID}}/draw">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button class="btn" type="submit">Run Draw</button>
+    </form>
+    {{end}}
+    <a class="btn secondary" href="{{.AlbumURL}}">View album</a>
+    <a class="btn secondary" href="/admin">Back to admin dashboard</a>
   </div>
-  <div>
-    <label for="caption">Caption</label>
-    <input id="caption" name="caption" type="text">
-  </div>
-  <button type="submit">Upload Photo</button>
-</form>
+</section>
 
-<p><a href="{{.AlbumURL}}">View album</a></p>
-
-<p><a href="/admin">Back to admin dashboard</a></p>
+<section class="card">
+  <h3 class="title-md">Upload Album Photo</h3>
+  <form class="form-stack" method="post" action="/admin/games/{{.GameID}}/photos" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="field">
+      <label for="photo">Photo</label>
+      <input id="photo" name="photo" type="file" accept="image/png,image/jpeg,image/webp" required>
+    </div>
+    <div class="field">
+      <label for="caption">Caption</label>
+      <input id="caption" name="caption" type="text">
+    </div>
+    <div class="btn-row">
+      <button class="btn" type="submit">Upload Photo</button>
+    </div>
+  </form>
+</section>
 {{end}}

@@ -1,22 +1,32 @@
 {{define "archive_page"}}
-<h1>Archive</h1>
+<section class="card">
+  <h1 class="title-md">Archive</h1>
+  <p class="muted">Past years and album records.</p>
+  <div class="btn-row">
+    <a class="btn secondary" href="/dashboard">Back to dashboard</a>
+  </div>
+</section>
+
 {{if .Years}}
   {{range .Years}}
-  <section style="margin-bottom: 1.5rem;">
-    <h2>{{.YearGregorian}} / {{.YearSolarHijri}}</h2>
-    <ul>
+  <section class="card">
+    <h2 class="title-md">{{.YearGregorian}} / {{.YearSolarHijri}}</h2>
+    <ul class="list-clean">
       {{range .Games}}
-      <li>
-        <a href="{{.GameURL}}">{{.Title}}</a> - {{.EventDate}} - {{.Status}}
-        - <a href="{{.AlbumURL}}">Album</a>
+      <li class="list-item">
+        <a href="{{.GameURL}}"><strong>{{.Title}}</strong></a>
+        <div class="meta">{{.EventDate}} - {{.Status}}</div>
+        <div class="btn-row">
+          <a class="btn secondary" href="{{.AlbumURL}}">Album</a>
+        </div>
       </li>
       {{end}}
     </ul>
   </section>
   {{end}}
 {{else}}
-<p>No archived games yet.</p>
+<section class="card">
+  <p class="muted">No archived games yet.</p>
+</section>
 {{end}}
-
-<p><a href="/dashboard">Back to dashboard</a></p>
 {{end}}

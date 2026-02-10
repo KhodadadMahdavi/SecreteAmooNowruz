@@ -1,31 +1,56 @@
 {{define "dashboard_page"}}
-<h1>Dashboard</h1>
-<p>Welcome, {{.DisplayName}} (@{{.Username}}).</p>
-<div>
-  <img src="{{.AvatarURL}}" alt="Avatar for {{.DisplayName}}" style="width: 120px; height: 120px; object-fit: cover; border-radius: 50%;">
-</div>
-<p>You are now logged in to Secrete Amoo Nowruz.</p>
-{{if .IsAdmin}}
-<p><a href="/admin">Go to admin dashboard</a></p>
-{{end}}
-<p><a href="{{.ArchiveURL}}">Browse archive</a></p>
-<h2>Games</h2>
-{{if .Games}}
-<ul>
-  {{range .Games}}
-  <li>
-    <a href="/games/{{.ID}}">{{.Title}}</a>
-    ({{.YearGregorian}} / {{.YearSolarHijri}})
-    - status: {{.Status}}
-    {{if .SignedUp}}- signed up{{else if and .SignupOpen (eq .Status "open")}}- open for signup{{else}}- signup closed{{end}}
-  </li>
+<section class="grid-two">
+  <article class="card">
+    <h1 class="title-md">Dashboard</h1>
+    <p>Welcome, {{.DisplayName}} (@{{.Username}}).</p>
+    <img class="avatar" src="{{.AvatarURL}}" alt="Avatar for {{.DisplayName}}">
+    <p class="muted">You are now logged in to Secrete Amoo Nowruz.</p>
+    <div class="btn-row">
+      {{if .IsAdmin}}<a class="btn secondary" href="/admin">Go to admin dashboard</a>{{end}}
+      <a class="btn secondary" href="{{.ArchiveURL}}">Browse archive</a>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button class="btn secondary" type="submit">Logout</button>
+      </form>
+    </div>
+  </article>
+
+  <aside class="card">
+    <h2 class="title-md">BuzzyBee Studio</h2>
+    <p class="muted">Annual game operations for Nowruz are all tracked in this workspace.</p>
+    <ul class="list-clean">
+      <li class="list-item">Join open games directly from this dashboard.</li>
+      <li class="list-item">Check archive for previous years.</li>
+      <li class="list-item">Admins can manage game lifecycle.</li>
+    </ul>
+  </aside>
+</section>
+
+<section class="card">
+  <h2 class="title-md">Games</h2>
+  {{if .Games}}
+  <ul class="list-clean">
+    {{range .Games}}
+    <li class="list-item">
+      <div>
+        <a href="/games/{{.ID}}"><strong>{{.Title}}</strong></a>
+        <span class="meta">({{.YearGregorian}} / {{.YearSolarHijri}})</span>
+      </div>
+      <div class="meta">
+        status: {{.Status}}
+        {{if .SignedUp}}
+          <span class="chip good">signed up</span>
+        {{else if and .SignupOpen (eq .Status "open")}}
+          <span class="chip warn">open for signup</span>
+        {{else}}
+          <span class="chip bad">signup closed</span>
+        {{end}}
+      </div>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="muted">No games yet.</p>
   {{end}}
-</ul>
-{{else}}
-<p>No games yet.</p>
-{{end}}
-<form method="post" action="/logout">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <button type="submit">Logout</button>
-</form>
+</section>
 {{end}}

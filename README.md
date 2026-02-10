@@ -1,6 +1,6 @@
 # Secrete Amoo Nowruz
 
-## Step 1-10 Status
+## Step 1-12 Status
 
 Project currently includes:
 
@@ -19,8 +19,10 @@ Project currently includes:
 - Draw and assignment reveal flow (`/admin/games/{id}/draw`, `/games/{id}/assignment`)
 - Album upload and viewing flow (`/admin/games/{id}/photos`, `/games/{id}/album`)
 - Year archive page with dual calendar labels (`/archive`)
+- Security hardening for mutating actions (CSRF + audit logs + stricter validation)
+- Containerized local stack (`app`, `postgres`) with runbook instructions
 
-## Run
+## Run (Local Go)
 
 ```powershell
 Copy-Item .env.example .env
@@ -28,6 +30,24 @@ go run ./cmd/web
 ```
 
 Server validates required config, runs migrations on startup, and logs a safe config summary.
+
+## Run (Docker Compose)
+
+```powershell
+docker compose up --build
+```
+
+Services:
+- Web app: `http://localhost:8080`
+- Postgres: `localhost:5432`
+
+Notes:
+- In the current implementation, uploads are handled by the local file-backed store and persisted in the `uploads_data` volume.
+- To stop and remove services:
+
+```powershell
+docker compose down
+```
 
 ## Step 3 Notes
 
@@ -118,3 +138,77 @@ Server validates required config, runs migrations on startup, and logs a safe co
   - Solar Hijri year
 - Archive includes links to each game and its album.
 - Dashboard now includes a direct link to archive.
+
+## Step 11 Notes
+
+- CSRF protection is enforced on all mutating form routes.
+- CSRF token is injected into all server-rendered forms for signup/login/logout/user signup/admin actions.
+- Audit logging was added for key mutations:
+  - `user.signup`
+  - `user.login`
+  - `user.logout`
+  - `game.signup`
+  - `admin.game.create`
+  - `admin.game.close_signup`
+  - `admin.game.draw`
+  - `admin.album.upload`
+- Input validation was tightened:
+  - username format and length
+  - display name length
+  - password length
+  - game title/description limits
+  - album caption length
+
+## Step 12 Notes
+
+- Test suite now covers the critical end-to-end flows for:
+  - auth register/login/logout
+  - admin authorization
+  - game signup constraints
+  - draw correctness constraints
+  - album upload/view permissions
+  - archive visibility
+  - CSRF rejection behavior
+  - audit log writes for mutating actions
+- Added container/runtime assets:
+  - `Dockerfile`
+  - `.dockerignore`
+  - `docker-compose.yml` (`app`, `db`)
+
+## Runbook
+
+### 1. Prerequisites
+
+- Go 1.25+ for local run and tests.
+- Docker + Docker Compose plugin for containerized run.
+
+### 2. Local verification
+
+```powershell
+go test ./...
+```
+
+Expected result: all tests pass.
+
+### 3. Compose verification
+
+Start stack:
+
+```powershell
+docker compose up --build
+```
+
+Health checks:
+
+```powershell
+Invoke-WebRequest http://localhost:8080/healthz
+Invoke-WebRequest http://localhost:8080/readyz
+```
+
+Expected result: both return HTTP `200`.
+
+Stop stack:
+
+```powershell
+docker compose down
+```

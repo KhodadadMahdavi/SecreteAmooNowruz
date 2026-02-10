@@ -1,17 +1,37 @@
 {{define "login_page"}}
-<h1>Login</h1>
-{{if .Error}}<p style="color: #b00020;">{{.Error}}</p>{{end}}
-<form method="post" action="/login">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <div>
-    <label for="username">Username</label>
-    <input id="username" name="username" type="text" required>
-  </div>
-  <div>
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" required>
-  </div>
-  <button type="submit">Login</button>
-</form>
-<p><a href="/signup">Need an account? Create one</a></p>
+<section class="grid-two">
+  <article class="card">
+    <h1 class="title-md">Login</h1>
+    <p class="muted">Sign in and continue to your dashboard.</p>
+    {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
+
+    <form class="form-stack" method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+      </div>
+      <div class="btn-row">
+        <button class="btn" type="submit">Login</button>
+        <a class="btn secondary" href="/signup">Create Account</a>
+      </div>
+    </form>
+  </article>
+
+  <aside class="card">
+    <h2 class="title-md">BuzzyBee Access</h2>
+    <p class="muted">
+      Use your existing account to join games, view assignments, and browse yearly albums.
+    </p>
+    <div class="hero-mark" style="min-height: 180px; margin-top: 12px;">
+      <span class="brand-mark" style="width: 150px; height: 150px;">
+        <img src="/static/img/buzzybee-logo.png" alt="BuzzyBee logo">
+      </span>
+    </div>
+  </aside>
+</section>
 {{end}}

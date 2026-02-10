@@ -1,0 +1,59 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: samn-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      PORT: "8080"
+      DB_DSN: postgres://postgres:postgres@db:5432/secrete_amoo_nowruz?sslmode=disable
+      SESSION_SECRET: change_this_to_a_secure_32_plus_char_secret
+      SESSION_TTL: 24h
+      SESSION_COOKIE_NAME: secrete_amoo_session
+      STORAGE_ENDPOINT: file:///app/data/uploads
+      STORAGE_REGION: us-east-1
+      STORAGE_BUCKET: secrete-amoo-nowruz
+      STORAGE_ACCESS_KEY: local-dev
+      STORAGE_SECRET_KEY: local-dev-secret
+      STORAGE_USE_SSL: "false"
+      ADMIN_SEED_ENABLED: "true"
+      ADMIN_SEED_USERNAME: admin
+      ADMIN_SEED_PASSWORD: changeme123
+      ADMIN_SEED_DISPLAY_NAME: Admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - uploads_data:/app/data/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readyz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: samn-db
+    environment:
+      POSTGRES_DB: secrete_amoo_nowruz
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d secrete_amoo_nowruz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  uploads_data:
+  postgres_data:
