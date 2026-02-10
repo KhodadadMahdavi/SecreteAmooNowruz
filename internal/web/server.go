@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -29,13 +31,18 @@ var templateFS embed.FS
 
 type contextKey string
 
-const userContextKey contextKey = "auth-user"
+const (
+	userContextKey contextKey = "auth-user"
+	csrfContextKey contextKey = "csrf-token"
+)
 
 const (
 	maxAvatarBytes          int64 = 2 * 1024 * 1024
 	maxAvatarMultipartBytes int64 = 4 * 1024 * 1024
 	maxAlbumPhotoBytes      int64 = 8 * 1024 * 1024
 	maxAlbumMultipartBytes  int64 = 10 * 1024 * 1024
+	csrfTokenBytes                = 32
+	csrfCookieName                = "samn_csrf"
 )
 
 type Server struct {
@@ -57,6 +64,7 @@ type authPageData struct {
 	Page    string
 	AppName string
 	Error   string
+	CSRFToken string
 }
 
 type dashboardPageData struct {
@@ -68,6 +76,7 @@ type dashboardPageData struct {
 	IsAdmin     bool
 	AvatarURL   string
 	ArchiveURL  string
+	CSRFToken   string
 	Games       []dashboardGameView
 }
 
@@ -98,6 +107,7 @@ type gamePageData struct {
 	Message           string
 	CanViewAssignment bool
 	AssignmentURL     string
+	CSRFToken         string
 }
 
 type adminDashboardPageData struct {
@@ -122,6 +132,7 @@ type adminNewGamePageData struct {
 	Page    string
 	AppName string
 	Error   string
+	CSRFToken string
 }
 
 type adminGameManagePageData struct {
@@ -141,6 +152,7 @@ type adminGameManagePageData struct {
 	DrawError      string
 	PhotoError     string
 	AlbumURL       string
+	CSRFToken      string
 }
 
 type assignmentPageData struct {
@@ -210,6 +222,7 @@ type AuthStore interface {
 	CreateAlbumPhoto(ctx context.Context, input model.CreateAlbumPhotoInput) (model.AlbumPhoto, error)
 	ListAlbumPhotosByGame(ctx context.Context, gameID int64) ([]model.AlbumPhoto, error)
 	GetAlbumPhotoByID(ctx context.Context, gameID, photoID int64) (model.AlbumPhoto, error)
+	CreateAuditLog(ctx context.Context, input model.AuditLogInput) error
 }
 
 type NewServerOptions struct {
@@ -291,7 +304,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.renderAuthPage(w, authPageData{
+		s.renderAuthPage(w, r, authPageData{
 			Title:   "Sign Up",
 			AppName: "Secrete Amoo Nowruz",
 		}, "signup_page")
@@ -301,13 +314,16 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid form data", http.StatusBadRequest)
 			return
 		}
+		if !s.validateCSRFFromRequest(w, r) {
+			return
+		}
 
 		username := strings.TrimSpace(r.FormValue("username"))
 		displayName := strings.TrimSpace(r.FormValue("display_name"))
 		password := r.FormValue("password")
 
 		if err := validateSignup(username, displayName, password); err != nil {
-			s.renderAuthPage(w, authPageData{
+			s.renderAuthPage(w, r, authPageData{
 				Title:   "Sign Up",
 				AppName: "Secrete Amoo Nowruz",
 				Error:   err.Error(),
@@ -323,7 +339,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 
 		avatarFile, _, err := r.FormFile("avatar")
 		if err != nil {
-			s.renderAuthPage(w, authPageData{
+			s.renderAuthPage(w, r, authPageData{
 				Title:   "Sign Up",
 				AppName: "Secrete Amoo Nowruz",
 				Error:   "Avatar image is required.",
@@ -334,7 +350,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 
 		avatarKey, err := s.uploadAvatar(r.Context(), username, avatarFile)
 		if err != nil {
-			s.renderAuthPage(w, authPageData{
+			s.renderAuthPage(w, r, authPageData{
 				Title:   "Sign Up",
 				AppName: "Secrete Amoo Nowruz",
 				Error:   err.Error(),
@@ -345,7 +361,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		user, err := s.store.CreateUser(r.Context(), username, passwordHash, displayName, &avatarKey)
 		if err != nil {
 			if errors.Is(err, db.ErrUsernameConflict) {
-				s.renderAuthPage(w, authPageData{
+				s.renderAuthPage(w, r, authPageData{
 					Title:   "Sign Up",
 					AppName: "Secrete Amoo Nowruz",
 					Error:   "Username is already taken.",
@@ -360,6 +376,9 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "create session", http.StatusInternalServerError)
 			return
 		}
+		s.audit(r.Context(), &user.ID, "user.signup", "user", &user.ID, map[string]any{
+			"username": user.Username,
+		})
 
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	default:
@@ -371,7 +390,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.renderAuthPage(w, authPageData{
+		s.renderAuthPage(w, r, authPageData{
 			Title:   "Login",
 			AppName: "Secrete Amoo Nowruz",
 		}, "login_page")
@@ -380,11 +399,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid form data", http.StatusBadRequest)
 			return
 		}
+		if !s.validateCSRFFromRequest(w, r) {
+			return
+		}
 
 		username := strings.TrimSpace(r.FormValue("username"))
 		password := r.FormValue("password")
 		if username == "" || password == "" {
-			s.renderAuthPage(w, authPageData{
+			s.renderAuthPage(w, r, authPageData{
 				Title:   "Login",
 				AppName: "Secrete Amoo Nowruz",
 				Error:   "Username and password are required.",
@@ -395,7 +417,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		user, err := s.store.GetUserByUsername(r.Context(), username)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
-				s.renderAuthPage(w, authPageData{
+				s.renderAuthPage(w, r, authPageData{
 					Title:   "Login",
 					AppName: "Secrete Amoo Nowruz",
 					Error:   "Invalid username or password.",
@@ -412,7 +434,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !valid {
-			s.renderAuthPage(w, authPageData{
+			s.renderAuthPage(w, r, authPageData{
 				Title:   "Login",
 				AppName: "Secrete Amoo Nowruz",
 				Error:   "Invalid username or password.",
@@ -424,6 +446,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "create session", http.StatusInternalServerError)
 			return
 		}
+		s.audit(r.Context(), &user.ID, "user.login", "user", &user.ID, map[string]any{
+			"username": user.Username,
+		})
 
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	default:
@@ -436,11 +461,22 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r, http.MethodPost) {
 		return
 	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !s.validateCSRFFromRequest(w, r) {
+		return
+	}
 
+	user := currentUser(r.Context())
 	cookie, err := r.Cookie(s.cfg.Session.CookieName)
 	if err == nil && cookie.Value != "" {
 		tokenHash := auth.HashSessionToken(cookie.Value)
 		_ = s.store.RevokeSessionByTokenHash(r.Context(), tokenHash)
+	}
+	if user != nil {
+		s.audit(r.Context(), &user.ID, "user.logout", "user", &user.ID, nil)
 	}
 
 	s.clearSessionCookie(w)
@@ -492,6 +528,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		IsAdmin:     user.IsAdmin,
 		AvatarURL:   "/avatar",
 		ArchiveURL:  "/archive",
+		CSRFToken:   csrfTokenFromContext(r.Context()),
 		Games:       gameViews,
 	}); err != nil {
 		http.Error(w, "render dashboard", http.StatusInternalServerError)
@@ -710,6 +747,7 @@ func (s *Server) handleGameDetail(w http.ResponseWriter, r *http.Request, gameID
 		Message:           message,
 		CanViewAssignment: canViewAssignment,
 		AssignmentURL:     fmt.Sprintf("/games/%d/assignment", gameID),
+		CSRFToken:         csrfTokenFromContext(r.Context()),
 	}); err != nil {
 		http.Error(w, "render game", http.StatusInternalServerError)
 		return
@@ -720,6 +758,13 @@ func (s *Server) handleGameSignup(w http.ResponseWriter, r *http.Request, gameID
 	user := currentUser(r.Context())
 	if user == nil {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !s.validateCSRFFromRequest(w, r) {
 		return
 	}
 
@@ -740,6 +785,9 @@ func (s *Server) handleGameSignup(w http.ResponseWriter, r *http.Request, gameID
 			return
 		}
 	}
+	s.audit(r.Context(), &user.ID, "game.signup", "game", &gameID, map[string]any{
+		"user_id": user.ID,
+	})
 
 	http.Redirect(w, r, fmt.Sprintf("/games/%d?signed_up=1", gameID), http.StatusSeeOther)
 }
@@ -925,7 +973,7 @@ func (s *Server) handleAdminNewGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.renderAdminNewGamePage(w, adminNewGamePageData{
+	s.renderAdminNewGamePage(w, r, adminNewGamePageData{
 		Title:   "Create Game",
 		AppName: "Secrete Amoo Nowruz",
 	})
@@ -950,10 +998,13 @@ func (s *Server) handleAdminCreateGame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
+	if !s.validateCSRFFromRequest(w, r) {
+		return
+	}
 
 	input, err := parseCreateGameInput(r, user.ID)
 	if err != nil {
-		s.renderAdminNewGamePage(w, adminNewGamePageData{
+		s.renderAdminNewGamePage(w, r, adminNewGamePageData{
 			Title:   "Create Game",
 			AppName: "Secrete Amoo Nowruz",
 			Error:   err.Error(),
@@ -966,6 +1017,9 @@ func (s *Server) handleAdminCreateGame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create game", http.StatusInternalServerError)
 		return
 	}
+	s.audit(r.Context(), &user.ID, "admin.game.create", "game", &game.ID, map[string]any{
+		"title": game.Title,
+	})
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?created=1", game.ID), http.StatusSeeOther)
 }
@@ -1064,6 +1118,7 @@ func (s *Server) handleAdminManageGame(w http.ResponseWriter, r *http.Request, g
 		DrawError:      drawError,
 		PhotoError:     photoError,
 		AlbumURL:       fmt.Sprintf("/games/%d/album", game.ID),
+		CSRFToken:      csrfTokenFromContext(r.Context()),
 	}); err != nil {
 		http.Error(w, "render admin game page", http.StatusInternalServerError)
 		return
@@ -1071,6 +1126,15 @@ func (s *Server) handleAdminManageGame(w http.ResponseWriter, r *http.Request, g
 }
 
 func (s *Server) handleAdminCloseSignup(w http.ResponseWriter, r *http.Request, gameID int64) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !s.validateCSRFFromRequest(w, r) {
+		return
+	}
+
+	user := currentUser(r.Context())
 	err := s.store.CloseGameSignup(r.Context(), gameID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -1080,11 +1144,23 @@ func (s *Server) handleAdminCloseSignup(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "close signup", http.StatusInternalServerError)
 		return
 	}
+	if user != nil {
+		s.audit(r.Context(), &user.ID, "admin.game.close_signup", "game", &gameID, nil)
+	}
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?closed=1", gameID), http.StatusSeeOther)
 }
 
 func (s *Server) handleAdminDraw(w http.ResponseWriter, r *http.Request, gameID int64) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+	if !s.validateCSRFFromRequest(w, r) {
+		return
+	}
+
+	user := currentUser(r.Context())
 	err := s.store.DrawAssignments(r.Context(), gameID)
 	if err != nil {
 		switch {
@@ -1104,6 +1180,9 @@ func (s *Server) handleAdminDraw(w http.ResponseWriter, r *http.Request, gameID 
 			http.Error(w, "draw failed", http.StatusInternalServerError)
 			return
 		}
+	}
+	if user != nil {
+		s.audit(r.Context(), &user.ID, "admin.game.draw", "game", &gameID, nil)
 	}
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?drawn=1", gameID), http.StatusSeeOther)
@@ -1130,6 +1209,9 @@ func (s *Server) handleAdminUploadPhoto(w http.ResponseWriter, r *http.Request, 
 		http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?photo_error=invalid-form", gameID), http.StatusSeeOther)
 		return
 	}
+	if !s.validateCSRFFromRequest(w, r) {
+		return
+	}
 
 	file, _, err := r.FormFile("photo")
 	if err != nil {
@@ -1139,6 +1221,10 @@ func (s *Server) handleAdminUploadPhoto(w http.ResponseWriter, r *http.Request, 
 	defer file.Close()
 
 	caption := strings.TrimSpace(r.FormValue("caption"))
+	if len(caption) > 200 {
+		http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?photo_error=caption-too-long", gameID), http.StatusSeeOther)
+		return
+	}
 	key, err := s.uploadAlbumPhoto(r.Context(), gameID, file)
 	if err != nil {
 		http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?photo_error=invalid-photo", gameID), http.StatusSeeOther)
@@ -1159,6 +1245,9 @@ func (s *Server) handleAdminUploadPhoto(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "save album photo", http.StatusInternalServerError)
 		return
 	}
+	s.audit(r.Context(), &user.ID, "admin.album.upload", "game", &gameID, map[string]any{
+		"caption": caption,
+	})
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/games/%d?uploaded=1", gameID), http.StatusSeeOther)
 }
@@ -1193,18 +1282,25 @@ func allowMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		csrfToken, err := s.ensureCSRFCookie(w, r)
+		if err != nil {
+			http.Error(w, "initialize csrf", http.StatusInternalServerError)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), csrfContextKey, csrfToken)
 		cookie, err := r.Cookie(s.cfg.Session.CookieName)
 		if err == nil && cookie.Value != "" {
 			tokenHash := auth.HashSessionToken(cookie.Value)
 			user, lookupErr := s.store.GetUserBySessionTokenHash(r.Context(), tokenHash)
 			if lookupErr == nil {
-				ctx := context.WithValue(r.Context(), userContextKey, &user)
-				next.ServeHTTP(w, r.WithContext(ctx))
+				userCtx := context.WithValue(ctx, userContextKey, &user)
+				next.ServeHTTP(w, r.WithContext(userCtx))
 				return
 			}
 		}
 
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -1239,6 +1335,14 @@ func currentUser(ctx context.Context) *model.User {
 		return nil
 	}
 	return user
+}
+
+func csrfTokenFromContext(ctx context.Context) string {
+	token, ok := ctx.Value(csrfContextKey).(string)
+	if !ok {
+		return ""
+	}
+	return token
 }
 
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64) error {
@@ -1280,14 +1384,14 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 }
 
 func validateSignup(username, displayName, password string) error {
-	if len(username) < 3 {
-		return fmt.Errorf("Username must be at least 3 characters.")
+	if !isValidUsername(username) {
+		return fmt.Errorf("Username must be 3-32 chars and include only lowercase letters, numbers, '-' or '_'.")
 	}
-	if len(displayName) < 2 {
-		return fmt.Errorf("Name must be at least 2 characters.")
+	if len(displayName) < 2 || len(displayName) > 80 {
+		return fmt.Errorf("Name must be between 2 and 80 characters.")
 	}
-	if len(password) < 8 {
-		return fmt.Errorf("Password must be at least 8 characters.")
+	if len(password) < 8 || len(password) > 128 {
+		return fmt.Errorf("Password must be between 8 and 128 characters.")
 	}
 	return nil
 }
@@ -1447,8 +1551,11 @@ func parseCreateGameInput(r *http.Request, createdBy int64) (model.CreateGameInp
 		return model.CreateGameInput{}, fmt.Errorf("Event date must use YYYY-MM-DD format.")
 	}
 
-	if title == "" {
-		return model.CreateGameInput{}, fmt.Errorf("Title is required.")
+	if len(title) < 3 || len(title) > 120 {
+		return model.CreateGameInput{}, fmt.Errorf("Title must be between 3 and 120 characters.")
+	}
+	if len(description) > 2000 {
+		return model.CreateGameInput{}, fmt.Errorf("Description must be at most 2000 characters.")
 	}
 	if yearGregorian < 2000 || yearGregorian > 2100 {
 		return model.CreateGameInput{}, fmt.Errorf("Gregorian year must be between 2000 and 2100.")
@@ -1467,18 +1574,91 @@ func parseCreateGameInput(r *http.Request, createdBy int64) (model.CreateGameInp
 	}, nil
 }
 
-func (s *Server) renderAuthPage(w http.ResponseWriter, data authPageData, pageTemplate string) {
+func (s *Server) renderAuthPage(w http.ResponseWriter, r *http.Request, data authPageData, pageTemplate string) {
 	data.Page = pageTemplate
+	data.CSRFToken = csrfTokenFromContext(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "base", data); err != nil {
 		http.Error(w, "render page", http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) renderAdminNewGamePage(w http.ResponseWriter, data adminNewGamePageData) {
+func (s *Server) renderAdminNewGamePage(w http.ResponseWriter, r *http.Request, data adminNewGamePageData) {
 	data.Page = "admin_new_game_page"
+	data.CSRFToken = csrfTokenFromContext(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "base", data); err != nil {
 		http.Error(w, "render page", http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) ensureCSRFCookie(w http.ResponseWriter, r *http.Request) (string, error) {
+	if cookie, err := r.Cookie(csrfCookieName); err == nil && cookie.Value != "" {
+		return cookie.Value, nil
+	}
+
+	token, err := generateCSRFToken()
+	if err != nil {
+		return "", err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cfg.AppEnv != "development",
+	})
+	return token, nil
+}
+
+func generateCSRFToken() (string, error) {
+	randomBytes := make([]byte, csrfTokenBytes)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
+}
+
+func (s *Server) validateCSRFFromRequest(w http.ResponseWriter, r *http.Request) bool {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return false
+	}
+
+	formToken := strings.TrimSpace(r.FormValue("csrf_token"))
+	if formToken == "" {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return false
+	}
+
+	if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(formToken)) != 1 {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func isValidUsername(username string) bool {
+	if len(username) < 3 || len(username) > 32 {
+		return false
+	}
+	for _, r := range username {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (s *Server) audit(ctx context.Context, actorUserID *int64, action, entityType string, entityID *int64, meta map[string]any) {
+	_ = s.store.CreateAuditLog(ctx, model.AuditLogInput{
+		ActorUserID: actorUserID,
+		Action:      action,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		Meta:        meta,
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -502,6 +503,30 @@ WHERE game_id = $1 AND id = $2;
 		return model.AlbumPhoto{}, err
 	}
 	return photo, nil
+}
+
+func (r *AuthRepository) CreateAuditLog(ctx context.Context, input model.AuditLogInput) error {
+	if strings.TrimSpace(input.Action) == "" {
+		return fmt.Errorf("audit action is required")
+	}
+	if strings.TrimSpace(input.EntityType) == "" {
+		return fmt.Errorf("audit entity_type is required")
+	}
+
+	meta := map[string]any{}
+	for key, value := range input.Meta {
+		meta[key] = value
+	}
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.db.ExecContext(ctx, `
+INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, meta_json)
+VALUES ($1, $2, $3, $4, $5::jsonb);
+`, input.ActorUserID, input.Action, input.EntityType, input.EntityID, string(metaJSON))
+	return err
 }
 
 type rowScanner interface {

@@ -60,3 +60,11 @@ type CreateAlbumPhotoInput struct {
 	Caption    string
 	UploadedBy int64
 }
+
+type AuditLogInput struct {
+	ActorUserID *int64
+	Action      string
+	EntityType  string
+	EntityID    *int64
+	Meta        map[string]any
+}

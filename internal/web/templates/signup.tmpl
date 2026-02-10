@@ -2,6 +2,7 @@
 <h1>Create Account</h1>
 {{if .Error}}<p style="color: #b00020;">{{.Error}}</p>{{end}}
 <form method="post" action="/signup" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <div>
     <label for="display_name">Name</label>
     <input id="display_name" name="display_name" type="text" required>

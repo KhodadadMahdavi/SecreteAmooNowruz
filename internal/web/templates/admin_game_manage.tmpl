@@ -20,22 +20,26 @@
   {{if eq .PhotoError "invalid-form"}}Invalid upload form.{{end}}
   {{if eq .PhotoError "missing-photo"}}Please choose a photo file.{{end}}
   {{if eq .PhotoError "invalid-photo"}}Photo must be JPG, PNG, or WEBP and up to 8MB.{{end}}
+  {{if eq .PhotoError "caption-too-long"}}Caption must be at most 200 characters.{{end}}
 </p>
 {{end}}
 
 {{if .SignupOpen}}
 <form method="post" action="/admin/games/{{.GameID}}/close-signup">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <button type="submit">Close Signup</button>
 </form>
 {{end}}
 {{if .CanDraw}}
 <form method="post" action="/admin/games/{{.GameID}}/draw">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <button type="submit">Run Draw</button>
 </form>
 {{end}}
 
 <h3>Upload Album Photo</h3>
 <form method="post" action="/admin/games/{{.GameID}}/photos" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <div>
     <label for="photo">Photo</label>
     <input id="photo" name="photo" type="file" accept="image/png,image/jpeg,image/webp" required>

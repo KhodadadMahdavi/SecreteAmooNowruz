@@ -3,6 +3,7 @@
 {{if .Error}}<p style="color: #b00020;">{{.Error}}</p>{{end}}
 
 <form method="post" action="/admin/games">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <div>
     <label for="title">Title</label>
     <input id="title" name="title" type="text" required>

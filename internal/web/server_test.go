@@ -205,11 +205,7 @@ func TestSignupLoginLogoutFlowWithAvatar(t *testing.T) {
 		t.Fatalf("avatar content-type = %q, want image/png", got)
 	}
 
-	logoutReq, err := http.NewRequest(http.MethodPost, ts.URL+"/logout", nil)
-	if err != nil {
-		t.Fatalf("NewRequest(logout) error = %v", err)
-	}
-	resp, err = client.Do(logoutReq)
+	resp, err = postEmptyFormWithCSRF(client, ts.URL, "/logout", "/dashboard")
 	if err != nil {
 		t.Fatalf("POST /logout error = %v", err)
 	}
@@ -234,7 +230,7 @@ func TestSignupRejectsInvalidAvatarMime(t *testing.T) {
 	ts := httptest.NewServer(server.Handler())
 	t.Cleanup(ts.Close)
 
-	client := &http.Client{}
+	client := newClientWithJar(t)
 	resp, err := postSignupMultipart(client, ts.URL, "Ali", "ali123", "password123", "avatar.txt", []byte("hello"))
 	if err != nil {
 		t.Fatalf("postSignupMultipart() error = %v", err)
@@ -266,7 +262,7 @@ func TestSignupRejectsOversizedAvatar(t *testing.T) {
 	ts := httptest.NewServer(server.Handler())
 	t.Cleanup(ts.Close)
 
-	client := &http.Client{}
+	client := newClientWithJar(t)
 	large := make([]byte, maxAvatarBytes+1)
 	copy(large, samplePNG())
 	resp, err := postSignupMultipart(client, ts.URL, "Ali", "ali123", "password123", "avatar.png", large)
@@ -315,11 +311,7 @@ func TestGameSignupFlow(t *testing.T) {
 	client := newClientWithJar(t)
 	mustSignupUser(t, client, ts.URL)
 
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/games/1/signup", nil)
-	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
-	}
-	resp, err := client.Do(req)
+	resp, err := postEmptyFormWithCSRF(client, ts.URL, "/games/1/signup", "/games/1")
 	if err != nil {
 		t.Fatalf("POST /games/1/signup error = %v", err)
 	}
@@ -375,11 +367,7 @@ func TestGameSignupDuplicateBlocked(t *testing.T) {
 	mustSignupUser(t, client, ts.URL)
 	mustGameSignup(t, client, ts.URL, 1, http.StatusSeeOther)
 
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/games/1/signup", nil)
-	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
-	}
-	resp, err := client.Do(req)
+	resp, err := postEmptyFormWithCSRF(client, ts.URL, "/games/1/signup", "/games/1")
 	if err != nil {
 		t.Fatalf("second POST /games/1/signup error = %v", err)
 	}
@@ -422,11 +410,7 @@ func TestGameSignupClosedBlocked(t *testing.T) {
 	client := newClientWithJar(t)
 	mustSignupUser(t, client, ts.URL)
 
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/games/2/signup", nil)
-	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
-	}
-	resp, err := client.Do(req)
+	resp, err := postEmptyFormWithCSRF(client, ts.URL, "/games/2/signup", "/games/2")
 	if err != nil {
 		t.Fatalf("POST /games/2/signup error = %v", err)
 	}
@@ -506,7 +490,7 @@ func TestAdminCreateAndCloseSignupFlow(t *testing.T) {
 		values.Set("year_solar_hijri", "1405")
 		values.Set("event_date", "2026-03-21")
 
-		resp, err := client.PostForm(ts.URL+"/admin/games", values)
+		resp, err := postFormWithCSRF(client, ts.URL, "/admin/games", "/admin/games/new", values)
 		if err != nil {
 			t.Fatalf("POST /admin/games error = %v", err)
 		}
@@ -522,11 +506,7 @@ func TestAdminCreateAndCloseSignupFlow(t *testing.T) {
 		t.Fatalf("games count = %d, want 2", len(store.games))
 	}
 
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/close-signup", nil)
-	if err != nil {
-		t.Fatalf("NewRequest(close-signup) error = %v", err)
-	}
-	resp, err = client.Do(req)
+	resp, err = postEmptyFormWithCSRF(client, ts.URL, "/admin/games/1/close-signup", "/admin/games/1")
 	if err != nil {
 		t.Fatalf("POST /admin/games/1/close-signup error = %v", err)
 	}
@@ -577,11 +557,7 @@ func TestAdminDrawAndUserAssignmentFlow(t *testing.T) {
 	mustGameSignup(t, adminClient, ts.URL, 1, http.StatusSeeOther)
 	mustGameSignup(t, userClient, ts.URL, 1, http.StatusSeeOther)
 
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/close-signup", nil)
-	if err != nil {
-		t.Fatalf("NewRequest(close-signup) error = %v", err)
-	}
-	resp, err := adminClient.Do(req)
+	resp, err := postEmptyFormWithCSRF(adminClient, ts.URL, "/admin/games/1/close-signup", "/admin/games/1")
 	if err != nil {
 		t.Fatalf("POST /admin/games/1/close-signup error = %v", err)
 	}
@@ -590,11 +566,7 @@ func TestAdminDrawAndUserAssignmentFlow(t *testing.T) {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSeeOther)
 	}
 
-	req, err = http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/draw", nil)
-	if err != nil {
-		t.Fatalf("NewRequest(draw) error = %v", err)
-	}
-	resp, err = adminClient.Do(req)
+	resp, err = postEmptyFormWithCSRF(adminClient, ts.URL, "/admin/games/1/draw", "/admin/games/1")
 	if err != nil {
 		t.Fatalf("POST /admin/games/1/draw error = %v", err)
 	}
@@ -623,11 +595,7 @@ func TestAdminDrawAndUserAssignmentFlow(t *testing.T) {
 
 	lateClient := newClientWithJar(t)
 	mustSignupUserAs(t, lateClient, ts.URL, "Nima", "nima123", "password123")
-	req, err = http.NewRequest(http.MethodPost, ts.URL+"/games/1/signup", nil)
-	if err != nil {
-		t.Fatalf("NewRequest(late signup) error = %v", err)
-	}
-	resp, err = lateClient.Do(req)
+	resp, err = postEmptyFormWithCSRF(lateClient, ts.URL, "/games/1/signup", "/games/1")
 	if err != nil {
 		t.Fatalf("POST /games/1/signup late error = %v", err)
 	}
@@ -668,21 +636,13 @@ func TestAdminDrawFailsNotEnoughParticipants(t *testing.T) {
 	store.setUserAdmin("ali123", true)
 	mustGameSignup(t, adminClient, ts.URL, 1, http.StatusSeeOther)
 
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/close-signup", nil)
-	if err != nil {
-		t.Fatalf("NewRequest(close-signup) error = %v", err)
-	}
-	resp, err := adminClient.Do(req)
+	resp, err := postEmptyFormWithCSRF(adminClient, ts.URL, "/admin/games/1/close-signup", "/admin/games/1")
 	if err != nil {
 		t.Fatalf("POST /admin/games/1/close-signup error = %v", err)
 	}
 	t.Cleanup(func() { _ = resp.Body.Close() })
 
-	req, err = http.NewRequest(http.MethodPost, ts.URL+"/admin/games/1/draw", nil)
-	if err != nil {
-		t.Fatalf("NewRequest(draw) error = %v", err)
-	}
-	resp, err = adminClient.Do(req)
+	resp, err = postEmptyFormWithCSRF(adminClient, ts.URL, "/admin/games/1/draw", "/admin/games/1")
 	if err != nil {
 		t.Fatalf("POST /admin/games/1/draw error = %v", err)
 	}
@@ -885,10 +845,99 @@ func TestArchivePageShowsPastGamesAndAlbumLinks(t *testing.T) {
 	}
 }
 
+func TestGameSignupRejectsMissingCSRFToken(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	store.games[1] = model.Game{
+		ID:             1,
+		Title:          "Secrete Amoo Nowruz 2026",
+		YearGregorian:  2026,
+		YearSolarHijri: 1405,
+		EventDate:      time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC),
+		SignupOpen:     true,
+		Status:         "open",
+	}
+
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUserAs(t, client, ts.URL, "Ali", "ali123", "password123")
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/games/1/signup", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /games/1/signup error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+}
+
+func TestAuditLogsRecordedForMutations(t *testing.T) {
+	t.Helper()
+
+	store := newMemoryAuthStore()
+	server, err := NewServer(NewServerOptions{
+		Config:   testConfig(),
+		Store:    store,
+		Uploader: newMemoryUploadStore(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	client := newClientWithJar(t)
+	mustSignupUserAs(t, client, ts.URL, "Ali", "ali123", "password123")
+	store.setUserAdmin("ali123", true)
+
+	values := make(url.Values)
+	values.Set("title", "Secrete Amoo Nowruz 2028")
+	values.Set("description", "Audit flow")
+	values.Set("year_gregorian", "2028")
+	values.Set("year_solar_hijri", "1407")
+	values.Set("event_date", "2028-03-21")
+	resp, err := postFormWithCSRF(client, ts.URL, "/admin/games", "/admin/games/new", values)
+	if err != nil {
+		t.Fatalf("POST /admin/games error = %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if !hasAuditAction(store.auditLogs, "user.signup") {
+		t.Fatalf("missing audit action user.signup; logs=%v", store.auditLogs)
+	}
+	if !hasAuditAction(store.auditLogs, "admin.game.create") {
+		t.Fatalf("missing audit action admin.game.create; logs=%v", store.auditLogs)
+	}
+}
+
 func postSignupMultipart(client *http.Client, baseURL, displayName, username, password, filename string, avatar []byte) (*http.Response, error) {
+	csrfToken, err := csrfTokenForPath(client, baseURL, "/signup")
+	if err != nil {
+		return nil, err
+	}
+
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
+	_ = writer.WriteField("csrf_token", csrfToken)
 	_ = writer.WriteField("display_name", displayName)
 	_ = writer.WriteField("username", username)
 	_ = writer.WriteField("password", password)
@@ -947,6 +996,7 @@ type memoryAuthStore struct {
 	signups     map[int64]map[int64]struct{}
 	assignments map[int64]map[int64]int64
 	albumPhotos map[int64][]model.AlbumPhoto
+	auditLogs   []model.AuditLogInput
 }
 
 type sessionData struct {
@@ -966,6 +1016,7 @@ func newMemoryAuthStore() *memoryAuthStore {
 		signups:     map[int64]map[int64]struct{}{},
 		assignments: map[int64]map[int64]int64{},
 		albumPhotos: map[int64][]model.AlbumPhoto{},
+		auditLogs:   make([]model.AuditLogInput, 0),
 	}
 }
 
@@ -1200,6 +1251,11 @@ func (s *memoryAuthStore) GetAlbumPhotoByID(_ context.Context, gameID, photoID i
 	return model.AlbumPhoto{}, db.ErrNotFound
 }
 
+func (s *memoryAuthStore) CreateAuditLog(_ context.Context, input model.AuditLogInput) error {
+	s.auditLogs = append(s.auditLogs, input)
+	return nil
+}
+
 type memoryUploadStore struct {
 	objects map[string]memoryObject
 }
@@ -1279,11 +1335,7 @@ func mustSignupUserAs(t *testing.T, client *http.Client, baseURL, displayName, u
 
 func mustGameSignup(t *testing.T, client *http.Client, baseURL string, gameID int64, wantStatus int) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/games/"+strconv.FormatInt(gameID, 10)+"/signup", nil)
-	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
-	}
-	resp, err := client.Do(req)
+	resp, err := postEmptyFormWithCSRF(client, baseURL, "/games/"+strconv.FormatInt(gameID, 10)+"/signup", "/games/"+strconv.FormatInt(gameID, 10))
 	if err != nil {
 		t.Fatalf("POST /games/%d/signup error = %v", gameID, err)
 	}
@@ -1294,9 +1346,15 @@ func mustGameSignup(t *testing.T, client *http.Client, baseURL string, gameID in
 }
 
 func postAdminPhotoMultipart(client *http.Client, baseURL string, gameID int64, caption, filename string, photo []byte) (*http.Response, error) {
+	csrfToken, err := csrfTokenForPath(client, baseURL, "/admin/games/"+strconv.FormatInt(gameID, 10))
+	if err != nil {
+		return nil, err
+	}
+
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
+	_ = writer.WriteField("csrf_token", csrfToken)
 	_ = writer.WriteField("caption", caption)
 	part, err := writer.CreateFormFile("photo", filename)
 	if err != nil {
@@ -1315,4 +1373,50 @@ func postAdminPhotoMultipart(client *http.Client, baseURL string, gameID int64, 
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return client.Do(req)
+}
+
+func postFormWithCSRF(client *http.Client, baseURL, postPath, tokenPath string, values url.Values) (*http.Response, error) {
+	csrfToken, err := csrfTokenForPath(client, baseURL, tokenPath)
+	if err != nil {
+		return nil, err
+	}
+	if values == nil {
+		values = make(url.Values)
+	}
+	values.Set("csrf_token", csrfToken)
+	return client.PostForm(baseURL+postPath, values)
+}
+
+func postEmptyFormWithCSRF(client *http.Client, baseURL, postPath, tokenPath string) (*http.Response, error) {
+	values := make(url.Values)
+	return postFormWithCSRF(client, baseURL, postPath, tokenPath, values)
+}
+
+func csrfTokenForPath(client *http.Client, baseURL, path string) (string, error) {
+	resp, err := client.Get(baseURL + path)
+	if err != nil {
+		return "", err
+	}
+	_ = resp.Body.Close()
+
+	baseURLParsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+
+	for _, cookie := range client.Jar.Cookies(baseURLParsed) {
+		if cookie.Name == csrfCookieName {
+			return cookie.Value, nil
+		}
+	}
+	return "", errors.New("csrf cookie not found")
+}
+
+func hasAuditAction(logs []model.AuditLogInput, action string) bool {
+	for _, entry := range logs {
+		if entry.Action == action {
+			return true
+		}
+	}
+	return false
 }

@@ -15,6 +15,7 @@
 {{end}}
 {{else if .CanSignup}}
 <form method="post" action="/games/{{.GameID}}/signup">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <button type="submit">Sign up for game</button>
 </form>
 {{else}}

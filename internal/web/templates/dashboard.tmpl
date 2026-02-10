@@ -25,6 +25,7 @@
 <p>No games yet.</p>
 {{end}}
 <form method="post" action="/logout">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <button type="submit">Logout</button>
 </form>
 {{end}}
